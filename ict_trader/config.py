@@ -277,7 +277,7 @@ BACKTEST_SCORE_SETS = ["conservative", "default", "aggressive"]
 # ──────────────────────────────────────────────
 # 실거래 모드
 # ──────────────────────────────────────────────
-PAPER_TRADING = True                 # True: 모의 거래 / False: 실제 주문
+PAPER_TRADING = False                # True: 모의 거래 / False: 실제 주문
 
 # ──────────────────────────────────────────────
 # LLM 설정 (Claude CLI 사용 — Max 구독 로그인 필요)
