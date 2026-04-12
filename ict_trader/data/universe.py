@@ -70,10 +70,16 @@ def fetch_top_coins() -> list[str]:
             return _cache
         return []
 
+    # CoinGecko 심볼 중 알파벳+숫자만 허용 (이상한 심볼 필터링)
+    import re
     symbols: list[str] = []
     for coin in data:
         ticker = coin.get("symbol", "").upper()
         if UNIVERSE_EXCLUDE_STABLECOINS and ticker in STABLECOINS:
+            continue
+        # 알파벳만 포함된 심볼만 (FIGR_HELOC 같은 이상한 심볼 제외)
+        if not re.match(r"^[A-Z0-9]{2,10}$", ticker):
+            logger.debug("비표준 심볼 제외: %s", ticker)
             continue
         symbols.append(f"{ticker}/USDT")
         if len(symbols) >= UNIVERSE_TOP_N:

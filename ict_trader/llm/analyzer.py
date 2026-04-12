@@ -99,31 +99,18 @@ def _parse_response(text: str) -> LLMVerdict:
 async def _call_claude_cli(
     prompt_text: str,
     system_prompt: str,
-    chart_image_path: str | None = None,
 ) -> str:
     """
     Claude CLI를 subprocess로 호출한다.
     Claude Max 로그인 상태에서 'claude -p' 사용.
-
-    Args:
-        prompt_text: 사용자 프롬프트
-        system_prompt: 시스템 프롬프트
-        chart_image_path: 차트 이미지 경로 (옵션)
-
-    Returns:
-        Claude 응답 텍스트
+    shell=True로 실행하여 PATH 환경 상속.
     """
     full_prompt = f"{system_prompt}\n\n---\n\n{prompt_text}"
 
-    args = [
-        "claude",
-        "-p",
-        "--model", "sonnet",
-        "--output-format", "text",
-    ]
+    cmd = "claude -p --model sonnet"
 
-    proc = await asyncio.create_subprocess_exec(
-        *args,
+    proc = await asyncio.create_subprocess_shell(
+        cmd,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -134,9 +121,16 @@ async def _call_claude_cli(
         timeout=LLM_TIMEOUT_SECONDS,
     )
 
+    stdout_text = stdout.decode("utf-8", errors="replace").strip()
+    stderr_text = stderr.decode("utf-8", errors="replace").strip()
+
     if proc.returncode != 0:
-        err_msg = stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(f"Claude CLI 오류 (code={proc.returncode}): {err_msg}")
+        logger.error("Claude CLI stderr: %s", stderr_text)
+        logger.error("Claude CLI stdout: %s", stdout_text[:200])
+        raise RuntimeError(
+            f"Claude CLI 오류 (code={proc.returncode}): "
+            f"{stderr_text or stdout_text or '알 수 없는 오류'}"
+        )
 
     return stdout.decode("utf-8", errors="replace").strip()
 
