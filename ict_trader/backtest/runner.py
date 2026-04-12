@@ -25,7 +25,7 @@ from ict_trader.config import (
 import ict_trader.config as config_module
 
 from ict_trader.data.universe import fetch_top_coins
-from ict_trader.data.fetcher import fetch_ohlcv_range, close_exchange
+from ict_trader.data.fetcher import fetch_ohlcv_range, close_exchange, get_max_lookback_days
 from ict_trader.backtest.engine import run_backtest_for_symbol, BacktestRun
 from ict_trader.backtest.reporter import (
     save_trades_csv,
@@ -95,18 +95,25 @@ async def run_all_combinations() -> None:
     3. 각 (파라미터, 점수) 조합별 백테스트 실행
     4. 결과 CSV 저장
     """
+    # Gate.io 타임프레임별 최대 조회 기간 계산
+    max_days_htf = get_max_lookback_days(HTF)   # 4h → ~1666일
+    max_days_mtf = get_max_lookback_days(MTF)   # 15m → ~104일
+    max_days_ltf = get_max_lookback_days(LTF)   # 5m → ~34일
+    effective_days = min(BACKTEST_DAYS, max_days_ltf - 2)  # 여유분 2일
+
     logger.info("=" * 60)
     logger.info("백테스트 시작")
-    logger.info("기간: %d일", BACKTEST_DAYS)
+    logger.info("요청 기간: %d일 → 실제 기간: %d일 (Gate.io 5m 제한: %d일)",
+                BACKTEST_DAYS, effective_days, max_days_ltf)
     logger.info("파라미터 세트: %s", BACKTEST_PARAM_SETS)
     logger.info("점수 세트: %s", BACKTEST_SCORE_SETS)
     logger.info("=" * 60)
 
     start_time = time.time()
 
-    # 기간 설정
+    # 기간 설정 (LTF 제한에 맞춤)
     now = datetime.now(timezone.utc)
-    since = now - timedelta(days=BACKTEST_DAYS)
+    since = now - timedelta(days=effective_days)
     since_ms = int(since.timestamp() * 1000)
     until_ms = int(now.timestamp() * 1000)
 
@@ -123,10 +130,12 @@ async def run_all_combinations() -> None:
     for symbol in symbols:
         try:
             frames = await _fetch_symbol_data(symbol, since_ms, until_ms)
-            # 최소 데이터 확인
-            htf_ok = not frames.get(HTF, __import__("pandas").DataFrame()).empty
-            ltf_ok = not frames.get(LTF, __import__("pandas").DataFrame()).empty
-            if htf_ok and ltf_ok:
+            # 최소 데이터 확인 (3개 타임프레임 모두 필요)
+            import pandas as _pd
+            htf_ok = not frames.get(HTF, _pd.DataFrame()).empty
+            mtf_ok = not frames.get(MTF, _pd.DataFrame()).empty
+            ltf_ok = not frames.get(LTF, _pd.DataFrame()).empty
+            if htf_ok and mtf_ok and ltf_ok:
                 symbol_data[symbol] = frames
             else:
                 logger.warning("  %s: 데이터 부족, 스킵", symbol)

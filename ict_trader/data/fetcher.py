@@ -119,6 +119,32 @@ async def fetch_multi_timeframe(symbol: str) -> dict[str, pd.DataFrame]:
     return frames
 
 
+def _timeframe_to_ms(tf: str) -> int:
+    """타임프레임 문자열을 밀리초로 변환."""
+    if tf.endswith("m"):
+        return int(tf[:-1]) * 60 * 1000
+    elif tf.endswith("h"):
+        return int(tf[:-1]) * 3600 * 1000
+    elif tf.endswith("d"):
+        return int(tf[:-1]) * 86400 * 1000
+    return 60000
+
+
+# Gate.io 최대 캔들 수 제한
+GATEIO_MAX_CANDLES = 10000
+
+
+def get_max_lookback_ms(timeframe: str) -> int:
+    """타임프레임별 Gate.io 최대 조회 가능 기간(ms)을 반환."""
+    candle_ms = _timeframe_to_ms(timeframe)
+    return candle_ms * GATEIO_MAX_CANDLES
+
+
+def get_max_lookback_days(timeframe: str) -> int:
+    """타임프레임별 최대 조회 가능 일수."""
+    return get_max_lookback_ms(timeframe) // (86400 * 1000)
+
+
 async def fetch_ohlcv_range(
     symbol: str,
     timeframe: str,
@@ -127,6 +153,7 @@ async def fetch_ohlcv_range(
 ) -> pd.DataFrame:
     """
     백테스트용: 특정 기간의 OHLCV를 페이징하여 전부 수집한다.
+    Gate.io 10,000 캔들 제한을 자동으로 처리한다.
 
     Args:
         symbol: 거래 쌍
@@ -138,6 +165,19 @@ async def fetch_ohlcv_range(
         전체 기간 OHLCV DataFrame
     """
     exchange = await get_exchange()
+
+    # Gate.io 10,000 캔들 제한: since_ms를 자동 조정
+    max_lookback = get_max_lookback_ms(timeframe)
+    earliest_allowed = until_ms - max_lookback
+    if since_ms < earliest_allowed:
+        max_days = get_max_lookback_days(timeframe)
+        logger.warning(
+            "%s %s: Gate.io 10,000캔들 제한 → 최근 %d일만 수집 (요청: %d일)",
+            symbol, timeframe, max_days,
+            (until_ms - since_ms) // (86400 * 1000),
+        )
+        since_ms = earliest_allowed
+
     all_ohlcv: list = []
     current_since = since_ms
     page_limit = 500
