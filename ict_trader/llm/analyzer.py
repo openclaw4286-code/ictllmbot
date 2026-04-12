@@ -109,11 +109,17 @@ async def _call_claude_cli(
 
     cmd = "claude -p --model sonnet"
 
+    # .env의 ANTHROPIC_API_KEY 플레이스홀더가 Claude CLI를 방해하지 않도록 제거
+    import os
+    env = os.environ.copy()
+    env.pop("ANTHROPIC_API_KEY", None)
+
     proc = await asyncio.create_subprocess_shell(
         cmd,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
 
     stdout, stderr = await asyncio.wait_for(
