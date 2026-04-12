@@ -36,17 +36,19 @@ def prompt_api_keys() -> None:
     global GATE_API_KEY, GATE_API_SECRET
     env_path = BASE_DIR / ".env"
 
-    if GATE_API_KEY and GATE_API_SECRET:
+    def _is_valid_key(key: str) -> bool:
+        return bool(key) and "your_" not in key and "here" not in key and len(key) > 10
+
+    if _is_valid_key(GATE_API_KEY) and _is_valid_key(GATE_API_SECRET):
+        print(f"Gate.io API 키: 설정됨 ({GATE_API_KEY[:6]}...)")
         return
 
     print("\n=== Gate.io API 키 설정 ===")
     print("(실거래에 필요합니다. PAPER_TRADING=True이면 건너뛰어도 됩니다)")
     print()
 
-    if not GATE_API_KEY:
-        GATE_API_KEY = input("GATE_API_KEY: ").strip()
-    if not GATE_API_SECRET:
-        GATE_API_SECRET = input("GATE_API_SECRET: ").strip()
+    GATE_API_KEY = input("GATE_API_KEY: ").strip()
+    GATE_API_SECRET = input("GATE_API_SECRET: ").strip()
 
     if GATE_API_KEY and GATE_API_SECRET:
         # .env 파일에 저장
