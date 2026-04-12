@@ -3,6 +3,8 @@ Fair Value Gap(FVG) 감지, Consequent Encroachment(CE) 계산, Fill 판정.
 3-캔들 패턴에서 1번째와 3번째 캔들 사이의 갭.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 

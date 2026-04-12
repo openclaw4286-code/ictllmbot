@@ -4,6 +4,8 @@ tick_size 정밀도 처리, 켈리 포지션 사이징, 주문 생성.
 모든 주문은 반드시 정밀도 처리 함수를 통과해야 한다.
 """
 
+from __future__ import annotations
+
 import math
 import logging
 import asyncio

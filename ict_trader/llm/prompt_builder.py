@@ -3,6 +3,8 @@ LLM 프롬프트 빌더.
 알고리즘 신호 + 차트 이미지 + 뉴스 + 경제지표를 Claude 프롬프트로 구성.
 """
 
+from __future__ import annotations
+
 import logging
 
 from ict_trader.algorithm.trigger import TriggerEvent, Confluence

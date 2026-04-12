@@ -4,6 +4,8 @@ Buy-Side Liquidity (BSL): Swing High 위 스탑로스 모음 → 상향 스윕
 Sell-Side Liquidity (SSL): Swing Low 아래 스탑로스 모음 → 하향 스윕
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 

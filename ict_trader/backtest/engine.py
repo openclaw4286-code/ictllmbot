@@ -4,6 +4,8 @@
 OHLCV 데이터에서 TP/SL 터치 순서로 승패 판정.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

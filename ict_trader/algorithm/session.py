@@ -3,6 +3,8 @@
 아시아/런던/뉴욕 세션만 활성, 그 외 및 주말은 비활성.
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime, timezone
 

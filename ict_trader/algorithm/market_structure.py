@@ -3,6 +3,8 @@ Market Structure 분석.
 Swing High/Low 감지, BOS(Break of Structure), CHoCH(Change of Character), 추세 판단.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
 

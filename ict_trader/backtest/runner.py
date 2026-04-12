@@ -4,6 +4,8 @@ config의 파라미터 세트 × 점수 세트 조합을 순차 실행.
 1년치 과거 OHLCV를 수집하여 각 조합별 백테스트.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import sys

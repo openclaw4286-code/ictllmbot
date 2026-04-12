@@ -3,6 +3,8 @@ Previous Day High/Low (PDH/PDL) Sweep 감지.
 전일 고가/저가를 스윕하면 방향 보강 컨플루언스.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 

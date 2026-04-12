@@ -4,6 +4,8 @@ ForexFactory 경제 캘린더 스크래핑.
 메인 루프에서 경제지표 잠금 판단에 사용.
 """
 
+from __future__ import annotations
+
 import time
 import logging
 from datetime import datetime, timezone, timedelta

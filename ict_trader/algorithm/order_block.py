@@ -3,6 +3,8 @@ Order Block(OB) 감지 및 Active POI 판정.
 큰 움직임 직전의 마지막 반대 방향 캔들이 OB.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 

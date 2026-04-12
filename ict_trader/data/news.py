@@ -3,6 +3,8 @@ CryptoPanic 뉴스 수집.
 심볼당 5분 캐시, LLM에 전달할 뉴스 최대 N개.
 """
 
+from __future__ import annotations
+
 import time
 import logging
 import requests

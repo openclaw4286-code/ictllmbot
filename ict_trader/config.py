@@ -3,6 +3,8 @@ ICT 자동 트레이딩 시스템 — 중앙 설정 파일
 모든 파라미터는 여기서만 관리한다. 하드코딩 절대 금지.
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv

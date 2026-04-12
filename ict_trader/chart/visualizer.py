@@ -4,6 +4,8 @@ mplfinance 캔들차트에 ICT 요소(OB/FVG/Swing/SL/TP/진입가) 마킹.
 base64 인코딩으로 Claude Vision 전송, Telegram 첨부용 이미지 생성.
 """
 
+from __future__ import annotations
+
 import io
 import base64
 import logging

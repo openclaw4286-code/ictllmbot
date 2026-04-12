@@ -6,6 +6,8 @@
 3. 세트 조합 비교 요약 CSV
 """
 
+from __future__ import annotations
+
 import logging
 from datetime import datetime
 

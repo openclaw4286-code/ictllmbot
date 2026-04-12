@@ -3,6 +3,8 @@ Telegram 알림.
 트레이딩 신호 + 차트 이미지를 Telegram으로 전송.
 """
 
+from __future__ import annotations
+
 import logging
 import asyncio
 

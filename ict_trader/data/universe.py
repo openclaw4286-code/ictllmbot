@@ -3,6 +3,8 @@ CoinGecko 시총 상위 코인 유니버스 관리.
 스테이블코인 제외, 1시간 캐시, Gate.io USDT 마켓 매핑.
 """
 
+from __future__ import annotations
+
 import time
 import logging
 import requests

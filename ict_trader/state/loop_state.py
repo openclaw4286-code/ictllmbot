@@ -3,6 +3,8 @@
 심볼별 쿨다운, LLM 실행 플래그, WAIT 연속 횟수, 루프 통계 추적.
 """
 
+from __future__ import annotations
+
 import time
 import logging
 from dataclasses import dataclass, field

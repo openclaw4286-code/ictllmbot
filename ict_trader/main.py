@@ -7,6 +7,8 @@ ICT 자동 트레이딩 시스템 — 메인 루프.
 Telegram 알림 → 포지션 등록 → 포지션 동기화 → 루프 통계 로깅
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import signal

@@ -4,6 +4,8 @@ Claude API를 호출하여 PASS/REJECT/WAIT 판단을 받는다.
 비동기, 타임아웃, 동시 호출 제한 지원.
 """
 
+from __future__ import annotations
+
 import json
 import asyncio
 import logging

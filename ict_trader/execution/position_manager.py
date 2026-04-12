@@ -3,6 +3,8 @@
 실시간 포지션 상태를 메모리에서 관리하고 거래소 동기화.
 """
 
+from __future__ import annotations
+
 import logging
 import asyncio
 from dataclasses import dataclass, field

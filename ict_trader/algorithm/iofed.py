@@ -3,6 +3,8 @@ IOFED (Institutional Order Flow Entry Drill) 패턴 감지.
 연속봉 후 반전 캔들 = 기관의 방향 전환 신호.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 

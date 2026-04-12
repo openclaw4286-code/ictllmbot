@@ -3,6 +3,8 @@
 HTF(4H) → MTF(15M) → LTF(5M) 분석, 점수 계산, SL/TP/R:R 산출.
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
 
