@@ -52,7 +52,7 @@ def build_signal_text(trigger: TriggerEvent) -> str:
         f"- 손절가(SL): ${trigger.stop_loss:,.2f}",
         f"- 목표가(TP): ${trigger.take_profit:,.2f}",
         f"- R:R 비율: 1:{trigger.rr_ratio:.1f}",
-        f"- 셋업 점수: {trigger.setup_score}점 ({trigger.grade}등급)",
+        f"- 컨플루언스: {len(trigger.confluences)}개",
         f"- 진입 방식: {trigger.entry_type}",
         f"- 세션: {trigger.session}",
         f"- HTF 추세: {trigger.htf_trend}",
@@ -62,7 +62,7 @@ def build_signal_text(trigger: TriggerEvent) -> str:
 
     for conf in trigger.confluences:
         detail = f" ({conf.detail})" if conf.detail else ""
-        lines.append(f"- {conf.name}: +{conf.score}점{detail}")
+        lines.append(f"- {conf.name}{detail}")
 
     return "\n".join(lines)
 

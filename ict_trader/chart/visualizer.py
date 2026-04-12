@@ -259,7 +259,7 @@ def render_trigger_charts(
     direction_emoji = "LONG" if trigger.direction == "bullish" else "SHORT"
     suptitle = (
         f"{trigger.symbol}  |  {direction_emoji}  |  "
-        f"{trigger.grade} ({trigger.setup_score}pts)  |  "
+        f"{len(trigger.confluences)} confluences  |  "
         f"R:R 1:{trigger.rr_ratio:.1f}  |  {trigger.session}"
     )
     fig.suptitle(suptitle, fontsize=13, color="#ffffff", fontweight="bold", y=0.98)

@@ -118,14 +118,8 @@ KELLY_CAP = 0.20                     # 켈리 상한 (20%)
 KELLY_FLOOR = 0.01                   # 켈리 하한 (1%)
 MAX_MARGIN_USAGE = 0.50              # 전체 증거금 사용 한도 (50%)
 
-# 점수 구간별 승률 추정값 (켈리 공식용)
-# 백테스트 결과 기반 보정 (2026-04-12, default+default 32일)
-KELLY_WIN_RATE = {
-    "60-69": 0.45,       # 실측 47.7%, 보수적 적용
-    "70-79": 0.40,       # 실측 36.7%, 보수적 적용 (기존 0.52 → 하향)
-    "80-89": 0.45,       # 표본 소량(3건), 보수적 적용 (기존 0.60 → 하향)
-    "90+":   0.50,       # 실측 데이터 없음, 보수적 적용 (기존 0.70 → 하향)
-}
+# 고정 승률 추정값 (켈리 공식용, 백테스트 기반)
+KELLY_WIN_RATE_FIXED = 0.43          # 백테스트 평균 승률 42.9%
 
 # ──────────────────────────────────────────────
 # 알고리즘 파라미터 세트
@@ -137,7 +131,6 @@ PARAM_SETS = {
         "htf_poi_tolerance": 0.003,   # HTF Active POI 근접 허용 오차 (0.3%)
         "liquidity_lookback": 30,     # Liquidity Sweep 감지 봉 수
         "iofed_lookback": 5,          # IOFED 유효 범위 봉 수
-        "min_setup_score": 75,        # 진입 최소 점수
         "rr_min_default": 2.0,        # R:R 최소 기준 (기본)
         "rr_min_with_poi": 1.8,       # R:R 최소 기준 (HTF POI 있을 때)
         "rr_min_strong": 1.5,         # R:R 최소 기준 (강한 컨플루언스)
@@ -150,7 +143,6 @@ PARAM_SETS = {
         "htf_poi_tolerance": 0.005,
         "liquidity_lookback": 20,
         "iofed_lookback": 8,
-        "min_setup_score": 65,
         "rr_min_default": 1.8,
         "rr_min_with_poi": 1.5,
         "rr_min_strong": 1.2,
@@ -163,7 +155,6 @@ PARAM_SETS = {
         "htf_poi_tolerance": 0.008,
         "liquidity_lookback": 15,
         "iofed_lookback": 10,
-        "min_setup_score": 55,
         "rr_min_default": 1.5,
         "rr_min_with_poi": 1.2,
         "rr_min_strong": 1.0,
@@ -173,92 +164,6 @@ PARAM_SETS = {
 }
 
 ACTIVE_PARAM_SET = "default"
-
-# ──────────────────────────────────────────────
-# 점수 가중치 세트
-# ──────────────────────────────────────────────
-SCORE_SETS = {
-    # 보수적: HTF 중심
-    "conservative": {
-        # HTF (4H) 컨플루언스
-        "htf_trend_aligned": 15,          # HTF 추세 방향 일치
-        "htf_ob_active": 12,              # HTF OB Active POI
-        "htf_fvg_active": 10,             # HTF FVG Active POI
-        "htf_liquidity_sweep": 10,        # HTF BSL/SSL Sweep
-        "htf_pdhl_sweep": 8,              # PDH/PDL Sweep
-
-        # MTF (15M) 컨플루언스
-        "mtf_bos_choch": 8,               # MTF BOS/CHoCH
-        "mtf_ob_active": 6,               # MTF OB Active
-        "mtf_fvg_active": 5,              # MTF FVG Active
-        "mtf_liquidity_sweep": 5,         # MTF BSL/SSL Sweep
-        "mtf_htf_poi_overlap": 10,        # HTF+MTF POI 겹침 (최강)
-
-        # LTF (5M) 컨플루언스
-        "ltf_fvg_ce": 5,                  # FVG CE 진입
-        "ltf_fvg_fill": 4,               # FVG Fill 진입
-        "ltf_iofed": 5,                  # IOFED 진입
-        "ltf_session_sweep": 3,           # Session Range Sweep
-        "ltf_liquidity_sweep": 3,         # LTF BSL/SSL Sweep
-        "ltf_bos_choch": 3,              # LTF BOS/CHoCH
-
-        # R:R 보너스
-        "rr_bonus_threshold": 3.0,        # 이 R:R 이상이면 보너스
-        "rr_bonus_points": 5,             # R:R 보너스 점수
-    },
-
-    # 기본
-    "default": {
-        "htf_trend_aligned": 12,
-        "htf_ob_active": 10,
-        "htf_fvg_active": 8,
-        "htf_liquidity_sweep": 8,
-        "htf_pdhl_sweep": 6,
-
-        "mtf_bos_choch": 10,
-        "mtf_ob_active": 8,
-        "mtf_fvg_active": 7,
-        "mtf_liquidity_sweep": 6,
-        "mtf_htf_poi_overlap": 12,
-
-        "ltf_fvg_ce": 7,
-        "ltf_fvg_fill": 6,
-        "ltf_iofed": 7,
-        "ltf_session_sweep": 4,
-        "ltf_liquidity_sweep": 4,
-        "ltf_bos_choch": 4,
-
-        "rr_bonus_threshold": 2.5,
-        "rr_bonus_points": 5,
-    },
-
-    # 공격적: LTF 중심
-    "aggressive": {
-        "htf_trend_aligned": 8,
-        "htf_ob_active": 7,
-        "htf_fvg_active": 6,
-        "htf_liquidity_sweep": 5,
-        "htf_pdhl_sweep": 4,
-
-        "mtf_bos_choch": 10,
-        "mtf_ob_active": 8,
-        "mtf_fvg_active": 7,
-        "mtf_liquidity_sweep": 7,
-        "mtf_htf_poi_overlap": 10,
-
-        "ltf_fvg_ce": 10,
-        "ltf_fvg_fill": 9,
-        "ltf_iofed": 10,
-        "ltf_session_sweep": 6,
-        "ltf_liquidity_sweep": 6,
-        "ltf_bos_choch": 6,
-
-        "rr_bonus_threshold": 2.0,
-        "rr_bonus_points": 5,
-    },
-}
-
-ACTIVE_SCORE_SET = "default"
 
 # ──────────────────────────────────────────────
 # 뉴스 / 경제 캘린더
@@ -272,7 +177,6 @@ ECON_CALENDAR_HIGH_IMPACT_ONLY = True
 # ──────────────────────────────────────────────
 BACKTEST_DAYS = 365                  # 테스트 기간 (1년)
 BACKTEST_PARAM_SETS = ["conservative", "default", "aggressive"]
-BACKTEST_SCORE_SETS = ["conservative", "default", "aggressive"]
 
 # ──────────────────────────────────────────────
 # 실거래 모드
@@ -292,19 +196,6 @@ def get_active_params() -> dict:
     return PARAM_SETS[ACTIVE_PARAM_SET]
 
 
-def get_active_scores() -> dict:
-    """현재 활성 점수 가중치 세트를 반환한다."""
-    return SCORE_SETS[ACTIVE_SCORE_SET]
-
-
-def get_kelly_win_rate(score: float) -> float:
-    """점수에 해당하는 켈리 승률 추정값을 반환한다."""
-    if score >= 90:
-        return KELLY_WIN_RATE["90+"]
-    elif score >= 80:
-        return KELLY_WIN_RATE["80-89"]
-    elif score >= 70:
-        return KELLY_WIN_RATE["70-79"]
-    elif score >= 60:
-        return KELLY_WIN_RATE["60-69"]
-    return 0.0
+def get_kelly_win_rate() -> float:
+    """켈리 공식용 고정 승률을 반환한다."""
+    return KELLY_WIN_RATE_FIXED

@@ -127,21 +127,17 @@ def adjust_order_precision(
 # ──────────────────────────────────────────────
 
 def calculate_kelly_fraction(
-    setup_score: int,
     rr_ratio: float,
 ) -> float:
     """
     켈리 공식으로 증거금 비율을 결정한다.
     f = (p × b - q) / b
-    p: 점수 구간별 승률, b: R:R, q: 1-p
+    p: 고정 승률 (백테스트 기반), b: R:R, q: 1-p
 
     Returns:
         증거금 비율 (0.0이면 진입 안 함)
     """
-    p = get_kelly_win_rate(setup_score)
-    if p <= 0:
-        return 0.0
-
+    p = get_kelly_win_rate()
     b = rr_ratio
     q = 1.0 - p
     f = (p * b - q) / b
@@ -158,8 +154,8 @@ def calculate_kelly_fraction(
     f = max(KELLY_FLOOR, min(KELLY_CAP, f))
 
     logger.debug(
-        "켈리 사이징: score=%d, p=%.2f, b=%.2f → f=%.4f (%.1f%%)",
-        setup_score, p, b, f, f * 100,
+        "켈리 사이징: p=%.2f, b=%.2f → f=%.4f (%.1f%%)",
+        p, b, f, f * 100,
     )
     return f
 

@@ -151,7 +151,7 @@ async def _execute_pass(
     symbol = trigger.symbol
 
     # 켈리 사이징
-    kelly_f = calculate_kelly_fraction(trigger.setup_score, trigger.rr_ratio)
+    kelly_f = calculate_kelly_fraction(trigger.rr_ratio)
     if kelly_f <= 0:
         logger.info("%s: 켈리 음수, 진입 안 함", symbol)
         return
@@ -191,7 +191,6 @@ async def _execute_pass(
         order_id=order_result.get("order_id", ""),
         sl_order_id=order_result.get("sl_order_id", ""),
         tp_order_id=order_result.get("tp_order_id", ""),
-        setup_score=trigger.setup_score,
         rr_ratio=trigger.rr_ratio,
         entry_type=trigger.entry_type,
         session=trigger.session,
@@ -332,11 +331,11 @@ async def _run_one_cycle(
         logger.info(
             "신호 감지: %s %s %s | 점수=%d(%s) R:R=1:%.1f",
             symbol, trigger.direction, trigger.entry_type,
-            trigger.setup_score, trigger.grade, trigger.rr_ratio,
+            trigger.rr_ratio, trigger.entry_type, len(trigger.confluences),
         )
 
     # 8. 상위 N개만 LLM 검토 (점수 기준 정렬)
-    triggers.sort(key=lambda t: t[0].setup_score, reverse=True)
+    triggers.sort(key=lambda t: t[0].rr_ratio, reverse=True)
     top_triggers = triggers[:TOP_SIGNALS_FOR_LLM]
 
     if top_triggers:

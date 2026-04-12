@@ -30,7 +30,6 @@ class Position:
     sl_order_id: str = ""
     tp_order_id: str = ""
     opened_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    setup_score: int = 0
     rr_ratio: float = 0.0
     entry_type: str = ""
     session: str = ""
@@ -93,7 +92,6 @@ class PositionManager:
         order_id: str,
         sl_order_id: str = "",
         tp_order_id: str = "",
-        setup_score: int = 0,
         rr_ratio: float = 0.0,
         entry_type: str = "",
         session: str = "",
@@ -110,7 +108,6 @@ class PositionManager:
             order_id=order_id,
             sl_order_id=sl_order_id,
             tp_order_id=tp_order_id,
-            setup_score=setup_score,
             rr_ratio=rr_ratio,
             entry_type=entry_type,
             session=session,

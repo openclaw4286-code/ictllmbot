@@ -36,7 +36,7 @@ def _build_signal_message(
     lines = [
         f"",
         f"{'='*60}",
-        f"{direction_emoji}  {direction_text} — {trigger.symbol}  |  {trigger.grade} ({trigger.setup_score}점){reset}",
+        f"{direction_emoji}  {direction_text} — {trigger.symbol}  |  R:R 1:{trigger.rr_ratio:.1f}  |  {len(trigger.confluences)} confluences{reset}",
         f"  진입 ${trigger.entry_price:,.2f}  SL ${trigger.stop_loss:,.2f}  TP ${trigger.take_profit:,.2f}",
         f"  R:R 1:{trigger.rr_ratio:.1f}  |  {trigger.session} 오픈  |  {trigger.entry_type.upper()}",
         f"  켈리 베팅: {kelly_pct:.1f}%  |  포지션: {position_amount:.6f} {coin}",
