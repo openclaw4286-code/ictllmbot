@@ -178,7 +178,7 @@ PAPER_TRADING = False                # True: 모의 거래 / False: 실제 주�
 # ──────────────────────────────────────────────
 # LLM 설정 (Claude CLI 사용 — Max 구독 로그인 필요)
 # ──────────────────────────────────────────────
-LLM_CLI_MODEL = "sonnet"             # claude -p --model sonnet
+LLM_CLI_MODEL = "opus"               # claude -p --model opus
 
 # ──────────────────────────────────────────────
 # 헬퍼: 현재 활성 파라미터/점수 세트 반환

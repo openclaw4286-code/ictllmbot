@@ -13,7 +13,7 @@ import tempfile
 import os
 from dataclasses import dataclass
 
-from ict_trader.config import LLM_TIMEOUT_SECONDS, LLM_MAX_CONCURRENT
+from ict_trader.config import LLM_TIMEOUT_SECONDS, LLM_MAX_CONCURRENT, LLM_CLI_MODEL
 from ict_trader.llm.prompt_builder import (
     SYSTEM_PROMPT,
     build_prompt,
@@ -107,7 +107,7 @@ async def _call_claude_cli(
     """
     full_prompt = f"{system_prompt}\n\n---\n\n{prompt_text}"
 
-    cmd = "claude -p --model sonnet"
+    cmd = f"claude -p --model {LLM_CLI_MODEL}"
 
     # .env의 ANTHROPIC_API_KEY 플레이스홀더가 Claude CLI를 방해하지 않도록 제거
     import os
