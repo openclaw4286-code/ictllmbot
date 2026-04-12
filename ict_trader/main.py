@@ -20,6 +20,7 @@ from ict_trader.config import (
     TOP_SIGNALS_FOR_LLM,
     PAPER_TRADING,
     LOG_DIR,
+    prompt_api_keys,
 )
 from ict_trader.data.universe import fetch_top_coins
 from ict_trader.data.fetcher import fetch_multi_timeframe, get_tick_size, close_exchange
@@ -377,6 +378,9 @@ async def _run_one_cycle(
 def main() -> None:
     """메인 엔트리포인트."""
     setup_logging()
+
+    # API 키가 없으면 터미널에서 입력받기
+    prompt_api_keys()
 
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)

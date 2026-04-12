@@ -21,15 +21,47 @@ LOG_DIR.mkdir(exist_ok=True)
 BACKTEST_RESULTS_DIR.mkdir(exist_ok=True)
 
 # ──────────────────────────────────────────────
-# API 키 (.env)
+# API 키 (.env 또는 터미널 입력)
 # ──────────────────────────────────────────────
 GATE_API_KEY = os.getenv("GATE_API_KEY", "")
 GATE_API_SECRET = os.getenv("GATE_API_SECRET", "")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-CRYPTOPANIC_API_KEY = os.getenv("CRYPTOPANIC_API_KEY", "")
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "")
+
+
+def prompt_api_keys() -> None:
+    """
+    Gate.io API 키가 비어있으면 터미널에서 입력받고 .env에 저장한다.
+    main.py 시작 시 호출.
+    """
+    global GATE_API_KEY, GATE_API_SECRET
+    env_path = BASE_DIR / ".env"
+
+    if GATE_API_KEY and GATE_API_SECRET:
+        return
+
+    print("\n=== Gate.io API 키 설정 ===")
+    print("(실거래에 필요합니다. PAPER_TRADING=True이면 건너뛰어도 됩니다)")
+    print()
+
+    if not GATE_API_KEY:
+        GATE_API_KEY = input("GATE_API_KEY: ").strip()
+    if not GATE_API_SECRET:
+        GATE_API_SECRET = input("GATE_API_SECRET: ").strip()
+
+    if GATE_API_KEY and GATE_API_SECRET:
+        # .env 파일에 저장
+        lines = []
+        if env_path.exists():
+            lines = env_path.read_text().splitlines()
+
+        # 기존 키 제거 후 추가
+        lines = [l for l in lines if not l.startswith("GATE_API_KEY=") and not l.startswith("GATE_API_SECRET=")]
+        lines.append(f"GATE_API_KEY={GATE_API_KEY}")
+        lines.append(f"GATE_API_SECRET={GATE_API_SECRET}")
+        env_path.write_text("\n".join(lines) + "\n")
+        print(".env에 저장 완료!\n")
+    else:
+        print("키 미입력 — PAPER_TRADING 모드로 진행합니다.\n")
 
 # ──────────────────────────────────────────────
 # 거래소
@@ -246,9 +278,9 @@ BACKTEST_SCORE_SETS = ["conservative", "default", "aggressive"]
 PAPER_TRADING = True                 # True: 모의 거래 / False: 실제 주문
 
 # ──────────────────────────────────────────────
-# LLM 설정
+# LLM 설정 (Claude CLI 사용 — Max 구독 로그인 필요)
 # ──────────────────────────────────────────────
-LLM_MODEL = "claude-sonnet-4-20250514"
+LLM_CLI_MODEL = "sonnet"             # claude -p --model sonnet
 
 # ──────────────────────────────────────────────
 # 헬퍼: 현재 활성 파라미터/점수 세트 반환

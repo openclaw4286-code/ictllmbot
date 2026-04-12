@@ -1,7 +1,7 @@
 """
 LLM 분석기.
-Claude API를 호출하여 PASS/REJECT/WAIT 판단을 받는다.
-비동기, 타임아웃, 동시 호출 제한 지원.
+Claude CLI (claude -p)를 subprocess로 호출하여 PASS/REJECT/WAIT 판단을 받는다.
+Claude Max 구독 로그인 상태에서 동작. API 키 불필요.
 """
 
 from __future__ import annotations
@@ -9,15 +9,14 @@ from __future__ import annotations
 import json
 import asyncio
 import logging
+import tempfile
+import os
 from dataclasses import dataclass
 
-import anthropic
-
-from ict_trader.config import ANTHROPIC_API_KEY, LLM_MODEL, LLM_TIMEOUT_SECONDS, LLM_MAX_CONCURRENT
+from ict_trader.config import LLM_TIMEOUT_SECONDS, LLM_MAX_CONCURRENT
 from ict_trader.llm.prompt_builder import (
     SYSTEM_PROMPT,
     build_prompt,
-    build_message_content,
 )
 from ict_trader.algorithm.trigger import TriggerEvent
 
@@ -97,6 +96,51 @@ def _parse_response(text: str) -> LLMVerdict:
     )
 
 
+async def _call_claude_cli(
+    prompt_text: str,
+    system_prompt: str,
+    chart_image_path: str | None = None,
+) -> str:
+    """
+    Claude CLI를 subprocess로 호출한다.
+    Claude Max 로그인 상태에서 'claude -p' 사용.
+
+    Args:
+        prompt_text: 사용자 프롬프트
+        system_prompt: 시스템 프롬프트
+        chart_image_path: 차트 이미지 경로 (옵션)
+
+    Returns:
+        Claude 응답 텍스트
+    """
+    full_prompt = f"{system_prompt}\n\n---\n\n{prompt_text}"
+
+    args = [
+        "claude",
+        "-p",
+        "--model", "sonnet",
+        "--output-format", "text",
+    ]
+
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    stdout, stderr = await asyncio.wait_for(
+        proc.communicate(full_prompt.encode("utf-8")),
+        timeout=LLM_TIMEOUT_SECONDS,
+    )
+
+    if proc.returncode != 0:
+        err_msg = stderr.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(f"Claude CLI 오류 (code={proc.returncode}): {err_msg}")
+
+    return stdout.decode("utf-8", errors="replace").strip()
+
+
 async def analyze_signal(
     trigger: TriggerEvent,
     chart_base64: str | None,
@@ -104,11 +148,11 @@ async def analyze_signal(
     econ_events: list[dict],
 ) -> LLMVerdict:
     """
-    단일 신호를 LLM에 검토 요청한다.
+    단일 신호를 Claude CLI로 검토 요청한다.
 
     Args:
         trigger: 알고리즘 트리거 이벤트
-        chart_base64: 차트 이미지 base64 (None이면 텍스트만)
+        chart_base64: 차트 이미지 base64 (현재 CLI 모드에서는 미사용)
         news_list: 뉴스 리스트
         econ_events: 경제지표 이벤트
 
@@ -119,31 +163,14 @@ async def analyze_signal(
 
     async with sem:
         prompt_text = build_prompt(trigger, news_list, econ_events)
-        content = build_message_content(prompt_text, chart_base64)
 
         logger.info(
-            "LLM 검토 요청: %s %s %s (점수=%d)",
+            "LLM 검토 요청 (Claude CLI): %s %s %s (점수=%d)",
             trigger.symbol, trigger.direction, trigger.entry_type, trigger.setup_score,
         )
 
         try:
-            client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-
-            response = await asyncio.wait_for(
-                client.messages.create(
-                    model=LLM_MODEL,
-                    max_tokens=512,
-                    system=SYSTEM_PROMPT,
-                    messages=[{"role": "user", "content": content}],
-                ),
-                timeout=LLM_TIMEOUT_SECONDS,
-            )
-
-            response_text = ""
-            for block in response.content:
-                if hasattr(block, "text"):
-                    response_text += block.text
-
+            response_text = await _call_claude_cli(prompt_text, SYSTEM_PROMPT)
             verdict = _parse_response(response_text)
 
             logger.info(
@@ -151,7 +178,6 @@ async def analyze_signal(
                 trigger.symbol, trigger.direction,
                 verdict.verdict, verdict.news_impact, verdict.econ_risk,
             )
-
             return verdict
 
         except asyncio.TimeoutError:
@@ -164,20 +190,11 @@ async def analyze_signal(
                 wait_reason="timeout",
                 error="timeout",
             )
-        except anthropic.APIError as e:
-            logger.error("Claude API 오류: %s — %s", trigger.symbol, e)
-            return LLMVerdict(
-                verdict="REJECT",
-                reasoning=f"API 오류로 안전하게 거부",
-                news_impact="NEUTRAL",
-                econ_risk="LOW",
-                error=str(e),
-            )
         except Exception as e:
-            logger.error("LLM 분석 예외: %s — %s", trigger.symbol, e)
+            logger.error("Claude CLI 오류: %s — %s", trigger.symbol, e)
             return LLMVerdict(
                 verdict="REJECT",
-                reasoning="예기치 않은 오류로 거부",
+                reasoning="CLI 오류로 안전하게 거부",
                 news_impact="NEUTRAL",
                 econ_risk="LOW",
                 error=str(e),
@@ -190,12 +207,6 @@ async def analyze_signals_batch(
     """
     여러 신호를 비동기로 동시 검토한다.
     세마포어로 LLM_MAX_CONCURRENT 제한.
-
-    Args:
-        triggers: [(trigger, chart_base64, news_list, econ_events), ...]
-
-    Returns:
-        [(trigger, verdict), ...]
     """
     tasks = [
         analyze_signal(trigger, chart_b64, news, econ)
