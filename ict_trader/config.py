@@ -16,9 +16,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 LOG_DIR = BASE_DIR / "logs"
-BACKTEST_RESULTS_DIR = BASE_DIR / "backtest_results"
 LOG_DIR.mkdir(exist_ok=True)
-BACKTEST_RESULTS_DIR.mkdir(exist_ok=True)
 
 # ──────────────────────────────────────────────
 # API 키 (.env 또는 터미널 입력)
@@ -171,12 +169,6 @@ ACTIVE_PARAM_SET = "default"
 NEWS_CACHE_TTL = 300                 # 심볼당 뉴스 캐시 (5분, 초)
 NEWS_MAX_ITEMS = 5                   # LLM에 전달할 뉴스 최대 수
 ECON_CALENDAR_HIGH_IMPACT_ONLY = True
-
-# ──────────────────────────────────────────────
-# 백테스트 설정
-# ──────────────────────────────────────────────
-BACKTEST_DAYS = 365                  # 테스트 기간 (1년)
-BACKTEST_PARAM_SETS = ["conservative", "default", "aggressive"]
 
 # ──────────────────────────────────────────────
 # 실거래 모드

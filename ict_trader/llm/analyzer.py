@@ -166,7 +166,7 @@ async def analyze_signal(
 
         logger.info(
             "LLM 검토 요청 (Claude CLI): %s %s %s (점수=%d)",
-            trigger.symbol, trigger.direction, trigger.entry_type, trigger.setup_score,
+            trigger.symbol, trigger.direction, trigger.entry_type, trigger.rr_ratio,
         )
 
         try:
