@@ -235,7 +235,9 @@ async def get_tick_size(symbol: str) -> dict:
     if not exchange.markets:
         await exchange.load_markets()
 
-    market = exchange.market(symbol)
+    # Gate.io 선물 심볼 변환
+    fs = f"{symbol}:USDT" if ":USDT" not in symbol else symbol
+    market = exchange.market(fs)
     precision = market.get("precision", {})
     limits = market.get("limits", {})
 

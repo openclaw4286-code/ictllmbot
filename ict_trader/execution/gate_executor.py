@@ -263,15 +263,20 @@ async def execute_order(
     try:
         exchange = await get_exchange()
 
+        # Gate.io 선물 심볼 변환: BTC/USDT → BTC/USDT:USDT
+        futures_symbol = trigger.symbol
+        if ":USDT" not in futures_symbol:
+            futures_symbol = f"{futures_symbol}:USDT"
+
         # 레버리지 설정
         try:
-            await exchange.set_leverage(LEVERAGE, trigger.symbol, params={"settle": "usdt"})
+            await exchange.set_leverage(LEVERAGE, futures_symbol)
         except Exception as e:
             logger.warning("레버리지 설정 실패 (기존값 사용): %s", e)
 
         # 시장가 주문 (Gate.io는 market buy에 price 필요)
         order = await exchange.create_order(
-            symbol=trigger.symbol,
+            symbol=futures_symbol,
             type="market",
             side=side,
             amount=adjusted["amount"],
@@ -294,7 +299,7 @@ async def execute_order(
         sl_side = "sell" if side == "buy" else "buy"
         try:
             sl_order = await exchange.create_order(
-                symbol=trigger.symbol,
+                symbol=futures_symbol,
                 type="stop",
                 side=sl_side,
                 amount=adjusted["amount"],
@@ -313,7 +318,7 @@ async def execute_order(
         # TP 주문 (익절)
         try:
             tp_order = await exchange.create_order(
-                symbol=trigger.symbol,
+                symbol=futures_symbol,
                 type="limit",
                 side=sl_side,
                 amount=adjusted["amount"],
@@ -359,9 +364,10 @@ async def cancel_orders(symbol: str) -> bool:
 
     try:
         exchange = await get_exchange()
-        open_orders = await exchange.fetch_open_orders(symbol)
+        fs = f"{symbol}:USDT" if ":USDT" not in symbol else symbol
+        open_orders = await exchange.fetch_open_orders(fs)
         for order in open_orders:
-            await exchange.cancel_order(order["id"], symbol)
+            await exchange.cancel_order(order["id"], fs)
             logger.info("주문 취소: %s (id=%s)", symbol, order["id"])
         return True
     except Exception as e:
