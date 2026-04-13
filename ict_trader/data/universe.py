@@ -32,6 +32,32 @@ STABLECOINS = {
 COINGECKO_URL = "https://api.coingecko.com/api/v3/coins/markets"
 
 
+# Gate.io 마켓 캐시
+_gate_markets: set[str] = set()
+_gate_markets_ts: float = 0.0
+
+
+def _get_gate_markets() -> set[str]:
+    """Gate.io 선물 마켓 심볼 목록을 가져온다 (1시간 캐시)."""
+    global _gate_markets, _gate_markets_ts
+
+    now = time.time()
+    if _gate_markets and (now - _gate_markets_ts) < 3600:
+        return _gate_markets
+
+    try:
+        import ccxt
+        exchange = ccxt.gateio({"options": {"defaultType": "swap"}})
+        exchange.load_markets()
+        _gate_markets = set(exchange.markets.keys())
+        _gate_markets_ts = now
+        logger.info("Gate.io 마켓 로드: %d개", len(_gate_markets))
+    except Exception as e:
+        logger.warning("Gate.io 마켓 로드 실패 (필터 비활성): %s", e)
+
+    return _gate_markets
+
+
 def fetch_top_coins() -> list[str]:
     """
     CoinGecko에서 시총 상위 코인을 가져와 Gate.io USDT 심볼 리스트로 반환.
@@ -70,18 +96,24 @@ def fetch_top_coins() -> list[str]:
             return _cache
         return []
 
-    # CoinGecko 심볼 중 알파벳+숫자만 허용 (이상한 심볼 필터링)
+    # Gate.io 마켓 목록으로 검증
+    gate_markets = _get_gate_markets()
+
     import re
     symbols: list[str] = []
     for coin in data:
         ticker = coin.get("symbol", "").upper()
         if UNIVERSE_EXCLUDE_STABLECOINS and ticker in STABLECOINS:
             continue
-        # 알파벳만 포함된 심볼만 (FIGR_HELOC 같은 이상한 심볼 제외)
         if not re.match(r"^[A-Z0-9]{2,10}$", ticker):
             logger.debug("비표준 심볼 제외: %s", ticker)
             continue
-        symbols.append(f"{ticker}/USDT")
+        pair = f"{ticker}/USDT"
+        # Gate.io에 존재하는 심볼만
+        if gate_markets and pair not in gate_markets:
+            logger.debug("Gate.io 미상장: %s", pair)
+            continue
+        symbols.append(pair)
         if len(symbols) >= UNIVERSE_TOP_N:
             break
 

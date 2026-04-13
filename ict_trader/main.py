@@ -147,24 +147,29 @@ async def _execute_pass(
     position_manager: PositionManager,
     loop_state: LoopState,
 ) -> None:
-    """PASS 판정 → 켈리 사이징 → 주문 실행 → Telegram 알림."""
+    """PASS 판정 → 켈리 사이징 → 주문 실행 → 알림."""
     symbol = trigger.symbol
+    logger.info("[PASS 처리 시작] %s %s R:R=%.2f", symbol, trigger.direction, trigger.rr_ratio)
 
     # 켈리 사이징
     kelly_f = calculate_kelly_fraction(trigger.rr_ratio)
+    logger.info("[켈리] %s: fraction=%.4f (%.1f%%)", symbol, kelly_f, kelly_f * 100)
     if kelly_f <= 0:
         logger.info("%s: 켈리 음수, 진입 안 함", symbol)
         return
 
     balance = await get_balance()
+    logger.info("[잔액] %s: $%.2f", symbol, balance)
     position_manager.set_balance(balance)
     current_usage = position_manager.get_margin_usage()
 
     margin, amount = calculate_position_size(
         balance, kelly_f, trigger.entry_price, current_usage,
     )
+    logger.info("[사이징] %s: margin=$%.2f, amount=%.8f, usage=%.1f%%",
+                symbol, margin, amount, current_usage * 100)
     if amount <= 0:
-        logger.info("%s: 포지션 크기 0, 진입 안 함", symbol)
+        logger.info("%s: 포지션 크기 0, 진입 안 함 (잔액=$%.2f)", symbol, balance)
         return
 
     # tick_size 정보 조회 & 주문 실행
