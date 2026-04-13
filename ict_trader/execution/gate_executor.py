@@ -222,13 +222,25 @@ async def execute_order(
     Returns:
         주문 결과 dict 또는 None (실패/페이퍼)
     """
+    # Gate.io 선물: 코인 수량 → 계약 수 변환
+    contract_size = market_info.get("contract_size", 1.0)
+    if contract_size and contract_size > 0:
+        contracts = amount / contract_size
+        contracts = max(1, int(contracts))  # 최소 1계약, 내림
+        logger.info(
+            "%s: 수량 %.6f → %d계약 (계약크기=%.6f)",
+            trigger.symbol, amount, contracts, contract_size,
+        )
+    else:
+        contracts = amount
+
     # 정밀도 조정
     adjusted = adjust_order_precision(
         trigger.direction,
         trigger.entry_price,
         trigger.stop_loss,
         trigger.take_profit,
-        amount,
+        contracts,
         market_info,
     )
 

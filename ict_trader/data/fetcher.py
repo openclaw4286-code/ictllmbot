@@ -241,9 +241,13 @@ async def get_tick_size(symbol: str) -> dict:
     precision = market.get("precision", {})
     limits = market.get("limits", {})
 
+    # Gate.io 선물: contractSize = 1계약당 코인 수량
+    contract_size = market.get("contractSize", 1.0)
+
     return {
         "price_precision": precision.get("price"),
         "amount_precision": precision.get("amount"),
         "tick_size": market.get("info", {}).get("tick_size"),
         "min_amount": limits.get("amount", {}).get("min"),
+        "contract_size": float(contract_size) if contract_size else 1.0,
     }
