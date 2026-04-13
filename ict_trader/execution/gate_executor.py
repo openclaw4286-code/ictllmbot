@@ -265,16 +265,17 @@ async def execute_order(
 
         # 레버리지 설정
         try:
-            await exchange.set_leverage(LEVERAGE, trigger.symbol)
+            await exchange.set_leverage(LEVERAGE, trigger.symbol, params={"settle": "usdt"})
         except Exception as e:
             logger.warning("레버리지 설정 실패 (기존값 사용): %s", e)
 
-        # 시장가 주문
+        # 시장가 주문 (Gate.io는 market buy에 price 필요)
         order = await exchange.create_order(
             symbol=trigger.symbol,
             type="market",
             side=side,
             amount=adjusted["amount"],
+            price=adjusted["entry_price"],
         )
 
         order_id = order.get("id", "")
