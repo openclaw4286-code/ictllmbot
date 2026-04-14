@@ -12,7 +12,7 @@ import asyncio
 
 from ict_trader.config import (
     LEVERAGE, KELLY_FLOOR, PAPER_TRADING,
-    SIZING_MIN_SAMPLES, SIZING_FIXED_FRACTION,
+    SIZING_MIN_SAMPLES, SIZING_BACKTEST_WIN_RATE,
     SIZING_MAX_FRACTION, SIZING_MAX_TOTAL_EXPOSURE,
 )
 from ict_trader.data.fetcher import get_exchange, get_tick_size
@@ -155,10 +155,9 @@ def get_trade_stats() -> tuple[int, float, float]:
 
 def calculate_bet_fraction(rr_ratio: float) -> float:
     """
-    베팅 비율을 결정한다.
-
-    - 표본 < SIZING_MIN_SAMPLES: 고정 비율 (SIZING_FIXED_FRACTION)
-    - 표본 >= SIZING_MIN_SAMPLES: Half-Kelly (실측 승률 기반)
+    베팅 비율을 Half-Kelly로 결정한다.
+    - 표본 < SIZING_MIN_SAMPLES: 백테스트 승률(SIZING_BACKTEST_WIN_RATE) 기반
+    - 표본 >= SIZING_MIN_SAMPLES: 실측 승률 기반
 
     Returns:
         잔고 대비 베팅 비율 (0.0이면 진입 안 함)
@@ -166,25 +165,25 @@ def calculate_bet_fraction(rr_ratio: float) -> float:
     total, win_rate, _ = get_trade_stats()
 
     if total < SIZING_MIN_SAMPLES:
-        # 표본 부족 → 고정 비율
-        f = SIZING_FIXED_FRACTION
-        logger.info("사이징: 고정 %.1f%% (표본 %d/%d)", f * 100, total, SIZING_MIN_SAMPLES)
+        p = SIZING_BACKTEST_WIN_RATE
+        mode = f"백테스트 기반 (표본 {total}/{SIZING_MIN_SAMPLES})"
     else:
-        # Half-Kelly: f = (p*b - q) / b / 2
         p = win_rate
-        b = rr_ratio
-        q = 1.0 - p
-        f = (p * b - q) / b
+        mode = f"실측 기반 (승률 {p*100:.1f}%, 표본 {total}건)"
 
-        if f <= 0:
-            return 0.0
+    # Half-Kelly: f = (p*b - q) / b / 2
+    b = rr_ratio
+    q = 1.0 - p
+    f = (p * b - q) / b
 
-        f *= 0.5  # Half-Kelly
-        f = max(KELLY_FLOOR, f)
-        logger.info("사이징: Half-Kelly %.1f%% (승률 %.1f%%, 표본 %d건)", f * 100, p * 100, total)
+    if f <= 0:
+        logger.info("사이징: 켈리 음수 (p=%.2f, R:R=%.2f), 진입 안 함", p, b)
+        return 0.0
 
-    # 상한 적용
+    f *= 0.5  # Half-Kelly
+    f = max(KELLY_FLOOR, f)
     f = min(f, SIZING_MAX_FRACTION)
+    logger.info("사이징: Half-Kelly %.1f%% — %s", f * 100, mode)
     return f
 
 

@@ -112,9 +112,9 @@ LTF_CANDLE_LIMIT = 200
 # ──────────────────────────────────────────────
 LEVERAGE = 3                         # 고정 레버리지
 
-# 사이징 모드: 표본 부족 시 고정 베팅, 충분하면 Half-Kelly
-SIZING_MIN_SAMPLES = 20              # 이 표본 수 이상이면 Half-Kelly 전환
-SIZING_FIXED_FRACTION = 0.05         # 표본 부족 시 고정 베팅 비율 (5%)
+# 사이징 모드: 표본 부족 시 백테스트 기반 Half-Kelly, 충분하면 실측 Half-Kelly
+SIZING_MIN_SAMPLES = 20              # 이 표본 수 이상이면 실측 승률로 전환
+SIZING_BACKTEST_WIN_RATE = 0.43      # 백테스트 기반 fallback 승률 (42.9%)
 SIZING_MAX_FRACTION = 0.15           # 1회 최대 베팅 비율 (15%)
 SIZING_MAX_TOTAL_EXPOSURE = 0.40     # 전체 포지션 합산 최대 노출 (40%)
 KELLY_FLOOR = 0.01                   # 켈리 하한 (1%)
