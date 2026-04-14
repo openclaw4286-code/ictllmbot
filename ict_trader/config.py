@@ -111,13 +111,13 @@ LTF_CANDLE_LIMIT = 200
 # 포지션 사이징
 # ──────────────────────────────────────────────
 LEVERAGE = 3                         # 고정 레버리지
-USE_HALF_KELLY = True                # 하프켈리 적용 여부
-KELLY_CAP = 0.20                     # 켈리 상한 (20%)
-KELLY_FLOOR = 0.01                   # 켈리 하한 (1%)
-MAX_MARGIN_USAGE = 0.50              # 전체 증거금 사용 한도 (50%)
 
-# 고정 승률 추정값 (켈리 공식용, 백테스트 기반)
-KELLY_WIN_RATE_FIXED = 0.43          # 백테스트 평균 승률 42.9%
+# 사이징 모드: 표본 부족 시 고정 베팅, 충분하면 Half-Kelly
+SIZING_MIN_SAMPLES = 20              # 이 표본 수 이상이면 Half-Kelly 전환
+SIZING_FIXED_FRACTION = 0.05         # 표본 부족 시 고정 베팅 비율 (5%)
+SIZING_MAX_FRACTION = 0.15           # 1회 최대 베팅 비율 (15%)
+SIZING_MAX_TOTAL_EXPOSURE = 0.40     # 전체 포지션 합산 최대 노출 (40%)
+KELLY_FLOOR = 0.01                   # 켈리 하한 (1%)
 
 # ──────────────────────────────────────────────
 # 알고리즘 파라미터 세트
@@ -181,13 +181,8 @@ PAPER_TRADING = False                # True: 모의 거래 / False: 실제 주�
 LLM_CLI_MODEL = "opus"               # claude -p --model opus
 
 # ──────────────────────────────────────────────
-# 헬퍼: 현재 활성 파라미터/점수 세트 반환
+# 헬퍼
 # ──────────────────────────────────────────────
 def get_active_params() -> dict:
     """현재 활성 알고리즘 파라미터 세트를 반환한다."""
     return PARAM_SETS[ACTIVE_PARAM_SET]
-
-
-def get_kelly_win_rate() -> float:
-    """켈리 공식용 고정 승률을 반환한다."""
-    return KELLY_WIN_RATE_FIXED
