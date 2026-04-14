@@ -11,9 +11,8 @@ import logging
 import asyncio
 
 from ict_trader.config import (
-    LEVERAGE, KELLY_FLOOR, PAPER_TRADING,
-    SIZING_MIN_SAMPLES, SIZING_FIXED_FRACTION,
-    SIZING_MAX_FRACTION, SIZING_MAX_TOTAL_EXPOSURE,
+    LEVERAGE, USE_HALF_KELLY, KELLY_CAP, KELLY_FLOOR,
+    MAX_MARGIN_USAGE, PAPER_TRADING, get_kelly_win_rate,
 )
 from ict_trader.data.fetcher import get_exchange, get_tick_size
 from ict_trader.algorithm.trigger import TriggerEvent
@@ -124,97 +123,81 @@ def adjust_order_precision(
 
 
 # ──────────────────────────────────────────────
-# 거래 이력 추적 (Kelly 승률 계산용)
+# 켈리 포지션 사이징
 # ──────────────────────────────────────────────
 
-_trade_results: list[dict] = []  # {"win": bool, "rr": float}
-
-
-def record_trade_result(win: bool, rr_ratio: float) -> None:
-    """거래 결과를 기록한다. position_manager에서 포지션 종료 시 호출."""
-    _trade_results.append({"win": win, "rr": rr_ratio})
-    total = len(_trade_results)
-    wins = sum(1 for t in _trade_results if t["win"])
-    logger.info("거래 기록: %s (누적 %d건, 승률 %.1f%%)",
-                "승" if win else "패", total, wins / total * 100 if total else 0)
-
-
-def get_trade_stats() -> tuple[int, float, float]:
-    """누적 거래 통계를 반환한다. (표본수, 승률, 평균R:R)"""
-    total = len(_trade_results)
-    if total == 0:
-        return 0, 0.0, 0.0
-    wins = sum(1 for t in _trade_results if t["win"])
-    avg_rr = sum(t["rr"] for t in _trade_results) / total
-    return total, wins / total, avg_rr
-
-
-# ──────────────────────────────────────────────
-# 포지션 사이징 (고정 → Half-Kelly 자동 전환)
-# ──────────────────────────────────────────────
-
-def calculate_bet_fraction(rr_ratio: float) -> float:
+def calculate_kelly_fraction(
+    rr_ratio: float,
+) -> float:
     """
-    베팅 비율을 결정한다.
-
-    - 표본 < SIZING_MIN_SAMPLES: 고정 비율 (SIZING_FIXED_FRACTION)
-    - 표본 >= SIZING_MIN_SAMPLES: Half-Kelly (실측 승률 기반)
+    켈리 공식으로 증거금 비율을 결정한다.
+    f = (p × b - q) / b
+    p: 고정 승률 (백테스트 기반), b: R:R, q: 1-p
 
     Returns:
-        잔고 대비 베팅 비율 (0.0이면 진입 안 함)
+        증거금 비율 (0.0이면 진입 안 함)
     """
-    total, win_rate, _ = get_trade_stats()
+    p = get_kelly_win_rate()
+    b = rr_ratio
+    q = 1.0 - p
+    f = (p * b - q) / b
 
-    if total < SIZING_MIN_SAMPLES:
-        # 표본 부족 → 고정 비율
-        f = SIZING_FIXED_FRACTION
-        logger.info("사이징: 고정 %.1f%% (표본 %d/%d)", f * 100, total, SIZING_MIN_SAMPLES)
-    else:
-        # Half-Kelly: f = (p*b - q) / b / 2
-        p = win_rate
-        b = rr_ratio
-        q = 1.0 - p
-        f = (p * b - q) / b
+    if f <= 0:
+        logger.debug("켈리 음수: f=%.4f (p=%.2f, b=%.2f) → 진입 안 함", f, p, b)
+        return 0.0
 
-        if f <= 0:
-            return 0.0
+    # 하프켈리
+    if USE_HALF_KELLY:
+        f *= 0.5
 
-        f *= 0.5  # Half-Kelly
-        f = max(KELLY_FLOOR, f)
-        logger.info("사이징: Half-Kelly %.1f%% (승률 %.1f%%, 표본 %d건)", f * 100, p * 100, total)
+    # 상한/하한 적용
+    f = max(KELLY_FLOOR, min(KELLY_CAP, f))
 
-    # 상한 적용
-    f = min(f, SIZING_MAX_FRACTION)
+    logger.debug(
+        "켈리 사이징: p=%.2f, b=%.2f → f=%.4f (%.1f%%)",
+        p, b, f, f * 100,
+    )
     return f
 
 
 def calculate_position_size(
     balance: float,
-    bet_fraction: float,
+    kelly_fraction: float,
     entry_price: float,
-    current_exposure: float,
+    current_margin_usage: float,
 ) -> tuple[float, float]:
     """
     포지션 크기를 계산한다.
 
     Args:
         balance: 총 잔액
-        bet_fraction: 베팅 비율
+        kelly_fraction: 켈리 비율
         entry_price: 진입가
-        current_exposure: 현재 총 노출 비율 (0.0~1.0)
+        current_margin_usage: 현재 증거금 사용 비율 (0.0~1.0)
 
     Returns:
-        (margin, coin_amount)
+        (margin_amount, position_amount)
+        margin_amount: 투입할 증거금
+        position_amount: 코인 수량
     """
-    remaining = SIZING_MAX_TOTAL_EXPOSURE - current_exposure
+    remaining = MAX_MARGIN_USAGE - current_margin_usage
     if remaining < KELLY_FLOOR:
+        logger.info("잔여 증거금 한도 %.1f%% < 최소 %.1f%%, 진입 안 함",
+                     remaining * 100, KELLY_FLOOR * 100)
         return 0.0, 0.0
 
-    actual = min(bet_fraction, remaining)
-    margin = balance * actual
+    # 켈리 결과가 잔여 한도보다 크면 잔여만큼
+    actual_fraction = min(kelly_fraction, remaining)
+
+    margin = balance * actual_fraction
     notional = margin * LEVERAGE
     amount = notional / entry_price
 
+    logger.debug(
+        "포지션 사이징: balance=$%.2f × kelly=%.2f%% = margin=$%.2f → "
+        "notional=$%.2f (×%d) → amount=%.6f",
+        balance, actual_fraction * 100, margin, notional, LEVERAGE, amount,
+    )
     return margin, amount
 
 

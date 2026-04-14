@@ -35,7 +35,7 @@ from ict_trader.algorithm.trigger import analyze_topdown, TriggerEvent
 from ict_trader.chart.visualizer import generate_chart_for_trigger
 from ict_trader.llm.analyzer import analyze_signal, LLMVerdict
 from ict_trader.execution.gate_executor import (
-    calculate_bet_fraction,
+    calculate_kelly_fraction,
     calculate_position_size,
     execute_order,
     get_balance,
@@ -151,8 +151,8 @@ async def _execute_pass(
     symbol = trigger.symbol
 
     # 켈리 사이징
-    bet_f = calculate_bet_fraction(trigger.rr_ratio)
-    if bet_f <= 0:
+    kelly_f = calculate_kelly_fraction(trigger.rr_ratio)
+    if kelly_f <= 0:
         return
 
     balance = await get_balance()
@@ -160,7 +160,7 @@ async def _execute_pass(
     current_usage = position_manager.get_margin_usage()
 
     margin, amount = calculate_position_size(
-        balance, bet_f, trigger.entry_price, current_usage,
+        balance, kelly_f, trigger.entry_price, current_usage,
     )
     if amount <= 0:
         return
@@ -196,7 +196,7 @@ async def _execute_pass(
     loop_state.mark_filled(symbol)
 
     # Telegram 알림
-    kelly_pct = bet_f * 100
+    kelly_pct = kelly_f * 100
     await notify_signal(
         trigger, verdict, kelly_pct,
         order_result.get("amount", amount),
