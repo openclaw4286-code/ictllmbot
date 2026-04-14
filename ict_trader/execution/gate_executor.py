@@ -189,31 +189,62 @@ def calculate_bet_fraction(rr_ratio: float) -> float:
 
 def calculate_position_size(
     balance: float,
-    bet_fraction: float,
+    kelly_fraction: float,
     entry_price: float,
+    stop_loss: float,
     current_exposure: float,
 ) -> tuple[float, float]:
     """
-    포지션 크기를 계산한다.
+    리스크 기반 포지션 사이징.
+    Kelly가 말하는 리스크(= SL 터치 시 잃을 금액)를 기준으로 계산.
+
+    실제 손실 = notional × SL거리%
+    따라서: notional = (balance × kelly) / SL거리%
+    증거금 = notional / leverage
 
     Args:
         balance: 총 잔액
-        bet_fraction: 베팅 비율
+        kelly_fraction: Kelly 리스크 비율 (자산 대비)
         entry_price: 진입가
-        current_exposure: 현재 총 노출 비율 (0.0~1.0)
+        stop_loss: 손절가
+        current_exposure: 현재 증거금 사용 비율 (0.0~1.0)
 
     Returns:
         (margin, coin_amount)
     """
+    # SL 거리 (%)
+    sl_distance_pct = abs(entry_price - stop_loss) / entry_price
+    if sl_distance_pct <= 0:
+        return 0.0, 0.0
+
+    # 잔여 증거금 한도
     remaining = SIZING_MAX_TOTAL_EXPOSURE - current_exposure
     if remaining < KELLY_FLOOR:
         return 0.0, 0.0
 
-    actual = min(bet_fraction, remaining)
-    margin = balance * actual
-    notional = margin * LEVERAGE
+    # Kelly 리스크 → notional → margin
+    risk_amount = balance * kelly_fraction
+    notional = risk_amount / sl_distance_pct
+    margin = notional / LEVERAGE
     amount = notional / entry_price
 
+    # 증거금 한도 초과 시 비례 축소
+    max_margin = balance * remaining
+    if margin > max_margin:
+        scale = max_margin / margin
+        margin = max_margin
+        notional *= scale
+        amount *= scale
+        logger.info(
+            "증거금 한도 초과, %.1f%%로 축소 (kelly=%.1f%%, sl=%.2f%%, lev=%dx)",
+            scale * 100, kelly_fraction * 100, sl_distance_pct * 100, LEVERAGE,
+        )
+
+    logger.info(
+        "사이징: risk=%.2f%%(= $%.2f), SL거리=%.2f%%, lev=%dx → margin=$%.2f, notional=$%.2f",
+        kelly_fraction * 100, risk_amount, sl_distance_pct * 100,
+        LEVERAGE, margin, notional,
+    )
     return margin, amount
 
 

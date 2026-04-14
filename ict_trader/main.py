@@ -160,7 +160,7 @@ async def _execute_pass(
     current_usage = position_manager.get_margin_usage()
 
     margin, amount = calculate_position_size(
-        balance, bet_f, trigger.entry_price, current_usage,
+        balance, bet_f, trigger.entry_price, trigger.stop_loss, current_usage,
     )
     if amount <= 0:
         return
