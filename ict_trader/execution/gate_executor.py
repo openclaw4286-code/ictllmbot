@@ -11,7 +11,7 @@ import logging
 import asyncio
 
 from ict_trader.config import (
-    LEVERAGE, KELLY_FLOOR, PAPER_TRADING,
+    LEVERAGE_MIN, LEVERAGE_MAX, LEVERAGE_FALLBACK, KELLY_FLOOR, PAPER_TRADING,
     SIZING_MIN_SAMPLES, SIZING_BACKTEST_WIN_RATE,
     SIZING_MAX_FRACTION, SIZING_MAX_TOTAL_EXPOSURE,
 )
@@ -124,19 +124,58 @@ def adjust_order_precision(
 
 
 # ──────────────────────────────────────────────
-# 거래 이력 추적 (Kelly 승률 계산용)
+# 거래 이력 추적 (Kelly 승률 계산용) + JSON 영속화
 # ──────────────────────────────────────────────
 
-_trade_results: list[dict] = []  # {"win": bool, "rr": float}
+import json
+from pathlib import Path
+from ict_trader.config import BASE_DIR
+
+_TRADE_HISTORY_FILE = BASE_DIR / "trade_history.json"
+_trade_results: list[dict] = []
 
 
-def record_trade_result(win: bool, rr_ratio: float) -> None:
-    """거래 결과를 기록한다. position_manager에서 포지션 종료 시 호출."""
-    _trade_results.append({"win": win, "rr": rr_ratio})
+def _load_trade_history() -> None:
+    """시작 시 JSON에서 거래 이력 로드."""
+    global _trade_results
+    if _TRADE_HISTORY_FILE.exists():
+        try:
+            with open(_TRADE_HISTORY_FILE, "r") as f:
+                _trade_results = json.load(f)
+            logger.info("거래 이력 로드: %d건", len(_trade_results))
+        except Exception as e:
+            logger.warning("거래 이력 로드 실패: %s", e)
+            _trade_results = []
+
+
+def _save_trade_history() -> None:
+    """거래 이력을 JSON에 저장."""
+    try:
+        with open(_TRADE_HISTORY_FILE, "w") as f:
+            json.dump(_trade_results, f, indent=2)
+    except Exception as e:
+        logger.error("거래 이력 저장 실패: %s", e)
+
+
+# 모듈 로드 시 자동으로 이력 읽기
+_load_trade_history()
+
+
+def record_trade_result(win: bool, rr_ratio: float, symbol: str = "") -> None:
+    """거래 결과를 기록하고 JSON에 저장."""
+    from datetime import datetime, timezone
+    _trade_results.append({
+        "win": win,
+        "rr": rr_ratio,
+        "symbol": symbol,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    })
+    _save_trade_history()
     total = len(_trade_results)
     wins = sum(1 for t in _trade_results if t["win"])
-    logger.info("거래 기록: %s (누적 %d건, 승률 %.1f%%)",
-                "승" if win else "패", total, wins / total * 100 if total else 0)
+    logger.info("거래 기록: %s %s (누적 %d건, 승률 %.1f%%)",
+                symbol, "승" if win else "패", total,
+                wins / total * 100 if total else 0)
 
 
 def get_trade_stats() -> tuple[int, float, float]:
@@ -147,6 +186,45 @@ def get_trade_stats() -> tuple[int, float, float]:
     wins = sum(1 for t in _trade_results if t["win"])
     avg_rr = sum(t["rr"] for t in _trade_results) / total
     return total, wins / total, avg_rr
+
+
+# ──────────────────────────────────────────────
+# 동적 레버리지 계산
+# ──────────────────────────────────────────────
+
+def calculate_optimal_leverage(
+    kelly_fraction: float,
+    entry_price: float,
+    stop_loss: float,
+) -> int:
+    """
+    Kelly 리스크와 SL 거리를 고려한 최적 레버리지를 계산한다.
+
+    수학적 근거:
+    - Kelly 리스크 달성 조건: margin × leverage × SL% = balance × kelly
+    - 증거금 한도 내에서 Kelly 달성 최소 레버리지:
+      L_min = kelly / (MaxExposure × SL%)
+    - 여기에 안전 버퍼 1.2배 적용, 실용적 범위[3, 25]로 클램프
+
+    Returns:
+        최적 레버리지 (정수)
+    """
+    sl_distance = abs(entry_price - stop_loss) / entry_price
+    if sl_distance <= 0 or kelly_fraction <= 0:
+        return LEVERAGE_FALLBACK
+
+    # Kelly 달성 최소 레버리지
+    l_min = kelly_fraction / (SIZING_MAX_TOTAL_EXPOSURE * sl_distance)
+    # 안전 버퍼 1.2배 (청산 버퍼 확보)
+    l_optimal = l_min * 1.2
+
+    # 실용 범위로 클램프
+    l_final = int(max(LEVERAGE_MIN, min(LEVERAGE_MAX, l_optimal)))
+    logger.info(
+        "동적 레버리지: kelly=%.1f%%, SL=%.2f%%, L_min=%.1f → L=%dx",
+        kelly_fraction * 100, sl_distance * 100, l_min, l_final,
+    )
+    return l_final
 
 
 # ──────────────────────────────────────────────
@@ -193,42 +271,22 @@ def calculate_position_size(
     entry_price: float,
     stop_loss: float,
     current_exposure: float,
+    leverage: int,
 ) -> tuple[float, float]:
-    """
-    리스크 기반 포지션 사이징.
-    Kelly가 말하는 리스크(= SL 터치 시 잃을 금액)를 기준으로 계산.
-
-    실제 손실 = notional × SL거리%
-    따라서: notional = (balance × kelly) / SL거리%
-    증거금 = notional / leverage
-
-    Args:
-        balance: 총 잔액
-        kelly_fraction: Kelly 리스크 비율 (자산 대비)
-        entry_price: 진입가
-        stop_loss: 손절가
-        current_exposure: 현재 증거금 사용 비율 (0.0~1.0)
-
-    Returns:
-        (margin, coin_amount)
-    """
-    # SL 거리 (%)
+    """리스크 기반 포지션 사이징 (동적 레버리지 적용)."""
     sl_distance_pct = abs(entry_price - stop_loss) / entry_price
     if sl_distance_pct <= 0:
         return 0.0, 0.0
 
-    # 잔여 증거금 한도
     remaining = SIZING_MAX_TOTAL_EXPOSURE - current_exposure
     if remaining < KELLY_FLOOR:
         return 0.0, 0.0
 
-    # Kelly 리스크 → notional → margin
     risk_amount = balance * kelly_fraction
     notional = risk_amount / sl_distance_pct
-    margin = notional / LEVERAGE
+    margin = notional / leverage
     amount = notional / entry_price
 
-    # 증거금 한도 초과 시 비례 축소
     max_margin = balance * remaining
     if margin > max_margin:
         scale = max_margin / margin
@@ -237,13 +295,13 @@ def calculate_position_size(
         amount *= scale
         logger.info(
             "증거금 한도 초과, %.1f%%로 축소 (kelly=%.1f%%, sl=%.2f%%, lev=%dx)",
-            scale * 100, kelly_fraction * 100, sl_distance_pct * 100, LEVERAGE,
+            scale * 100, kelly_fraction * 100, sl_distance_pct * 100, leverage,
         )
 
     logger.info(
         "사이징: risk=%.2f%%(= $%.2f), SL거리=%.2f%%, lev=%dx → margin=$%.2f, notional=$%.2f",
         kelly_fraction * 100, risk_amount, sl_distance_pct * 100,
-        LEVERAGE, margin, notional,
+        leverage, margin, notional,
     )
     return margin, amount
 
@@ -256,6 +314,7 @@ async def execute_order(
     trigger: TriggerEvent,
     amount: float,
     market_info: dict,
+    leverage: int = LEVERAGE_FALLBACK,
 ) -> dict | None:
     """
     Gate.io에 주문을 실행한다.
@@ -304,7 +363,7 @@ async def execute_order(
         "entry_price": adjusted["entry_price"],
         "stop_loss": adjusted["stop_loss"],
         "take_profit": adjusted["take_profit"],
-        "leverage": LEVERAGE,
+        "leverage": leverage,
         "paper": PAPER_TRADING,
     }
 
@@ -329,7 +388,7 @@ async def execute_order(
 
         # 레버리지 설정
         try:
-            await exchange.set_leverage(LEVERAGE, futures_symbol)
+            await exchange.set_leverage(leverage, futures_symbol)
         except Exception as e:
             logger.warning("레버리지 설정 실패 (기존값 사용): %s", e)
 

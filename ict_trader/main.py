@@ -37,6 +37,7 @@ from ict_trader.llm.analyzer import analyze_signal, LLMVerdict
 from ict_trader.execution.gate_executor import (
     calculate_bet_fraction,
     calculate_position_size,
+    calculate_optimal_leverage,
     execute_order,
     get_balance,
 )
@@ -159,8 +160,11 @@ async def _execute_pass(
     position_manager.set_balance(balance)
     current_usage = position_manager.get_margin_usage()
 
+    # 동적 레버리지 계산
+    leverage = calculate_optimal_leverage(bet_f, trigger.entry_price, trigger.stop_loss)
+
     margin, amount = calculate_position_size(
-        balance, bet_f, trigger.entry_price, trigger.stop_loss, current_usage,
+        balance, bet_f, trigger.entry_price, trigger.stop_loss, current_usage, leverage,
     )
     if amount <= 0:
         return
@@ -172,7 +176,7 @@ async def _execute_pass(
         logger.error("%s: tick_size 조회 실패 — %s", symbol, e)
         return
 
-    order_result = await execute_order(trigger, amount, market_info)
+    order_result = await execute_order(trigger, amount, market_info, leverage)
     if order_result is None:
         logger.error("%s: 주문 실행 실패", symbol)
         return

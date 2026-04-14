@@ -159,13 +159,63 @@ class PositionManager:
                     closed.append(symbol)
 
             for symbol in closed:
-                self.close_position(symbol, reason="거래소 동기화 (SL/TP 체결)")
+                pos = self._positions.get(symbol)
+                if pos:
+                    # SL/TP 주문 상태 확인 → 승/패 판정
+                    win = await self._determine_win_loss(exchange, pos)
+                    reason = "TP 체결 (승)" if win else "SL 체결 (패)"
+
+                    # Kelly 학습용으로 기록
+                    from ict_trader.execution.gate_executor import record_trade_result
+                    record_trade_result(win, pos.rr_ratio, symbol=symbol)
+
+                self.close_position(symbol, reason=reason if pos else "종료")
 
             if closed:
                 logger.info("동기화로 종료된 포지션: %s", closed)
 
         except Exception as e:
             logger.error("포지션 동기화 실패: %s", e)
+
+    async def _determine_win_loss(self, exchange, pos: Position) -> bool:
+        """
+        포지션 종료 원인을 SL/TP 주문 상태로 판정한다.
+        TP 주문이 filled/closed 상태면 승, SL 주문이 filled면 패.
+        조회 실패 시 최근가 비교로 폴백.
+        """
+        futures_symbol = f"{pos.symbol}:USDT" if ":USDT" not in pos.symbol else pos.symbol
+
+        # TP 주문 상태 확인 먼저
+        if pos.tp_order_id:
+            try:
+                tp_order = await exchange.fetch_order(pos.tp_order_id, futures_symbol)
+                status = tp_order.get("status", "")
+                if status in ("closed", "filled"):
+                    return True  # TP 체결 = 승
+            except Exception as e:
+                logger.debug("TP 주문 상태 조회 실패: %s", e)
+
+        # SL 주문 상태 확인
+        if pos.sl_order_id:
+            try:
+                sl_order = await exchange.fetch_order(pos.sl_order_id, futures_symbol)
+                status = sl_order.get("status", "")
+                if status in ("closed", "filled"):
+                    return False  # SL 체결 = 패
+            except Exception as e:
+                logger.debug("SL 주문 상태 조회 실패: %s", e)
+
+        # 폴백: 현재가 vs 진입가 방향 비교
+        try:
+            ticker = await exchange.fetch_ticker(futures_symbol)
+            current = float(ticker.get("last", 0))
+            if pos.direction == "bullish":
+                return current > pos.entry_price
+            else:
+                return current < pos.entry_price
+        except Exception as e:
+            logger.warning("현재가 조회 실패, 패로 처리: %s", e)
+            return False
 
     def summary(self) -> str:
         """현재 포지션 요약 문자열."""
