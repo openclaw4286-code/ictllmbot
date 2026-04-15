@@ -81,6 +81,7 @@ logger = logging.getLogger(__name__)
 # ──────────────────────────────────────────────
 
 _shutdown = False
+_execution_lock = asyncio.Lock()  # 주문 실행 직렬화용
 
 
 def _signal_handler(sig, frame) -> None:
@@ -148,7 +149,23 @@ async def _execute_pass(
     position_manager: PositionManager,
     loop_state: LoopState,
 ) -> None:
-    """PASS 판정 → 켈리 사이징 → 주문 실행 → 알림."""
+    """PASS 판정 → 켈리 사이징 → 주문 실행 → 알림.
+    Lock으로 직렬화: 동시에 여러 PASS가 와도 증거금 한도 초과 방지.
+    """
+    async with _execution_lock:
+        await _execute_pass_locked(
+            trigger, verdict, chart_bytes, position_manager, loop_state
+        )
+
+
+async def _execute_pass_locked(
+    trigger: TriggerEvent,
+    verdict: LLMVerdict,
+    chart_bytes: bytes | None,
+    position_manager: PositionManager,
+    loop_state: LoopState,
+) -> None:
+    """Lock 내부 실행 로직."""
     symbol = trigger.symbol
 
     # 켈리 사이징
