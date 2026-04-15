@@ -10,7 +10,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from ict_trader.config import PAPER_TRADING, LEVERAGE, SIZING_MAX_TOTAL_EXPOSURE
+from ict_trader.config import PAPER_TRADING, SIZING_MAX_TOTAL_EXPOSURE
 from ict_trader.data.fetcher import get_exchange
 
 logger = logging.getLogger(__name__)
