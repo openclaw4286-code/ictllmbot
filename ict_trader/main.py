@@ -166,7 +166,16 @@ async def _execute_pass_locked(
     loop_state: LoopState,
 ) -> None:
     """Lock 내부 실행 로직."""
+    from ict_trader.config import MAX_CONCURRENT_POSITIONS
     symbol = trigger.symbol
+
+    # 동시 포지션 수 제한
+    if position_manager.position_count >= MAX_CONCURRENT_POSITIONS:
+        logger.info(
+            "%s: 동시 포지션 한도 도달 (%d/%d), 진입 안 함",
+            symbol, position_manager.position_count, MAX_CONCURRENT_POSITIONS,
+        )
+        return
 
     # 켈리 사이징
     bet_f = calculate_bet_fraction(trigger.rr_ratio)
