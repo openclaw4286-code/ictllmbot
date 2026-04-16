@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 def _build_signal_message(
     trigger: TriggerEvent,
     verdict: LLMVerdict,
-    kelly_pct: float,
+    risk_pct: float,
     position_amount: float,
 ) -> str:
     """트레이딩 신호 메시지 포맷팅."""
@@ -39,7 +39,7 @@ def _build_signal_message(
         f"{direction_emoji}  {direction_text} — {trigger.symbol}  |  R:R 1:{trigger.rr_ratio:.1f}  |  {len(trigger.confluences)} confluences{reset}",
         f"  진입 ${trigger.entry_price:,.2f}  SL ${trigger.stop_loss:,.2f}  TP ${trigger.take_profit:,.2f}",
         f"  R:R 1:{trigger.rr_ratio:.1f}  |  {trigger.session} 오픈  |  {trigger.entry_type.upper()}",
-        f"  켈리 베팅: {kelly_pct:.1f}%  |  포지션: {position_amount:.6f} {coin}",
+        f"  리스크: {risk_pct:.1f}%  |  포지션: {position_amount:.6f} {coin}",
         f"",
         f"  [LLM 검토] {verdict.reasoning}",
         f"  뉴스: {news_kr}  |  경제지표 리스크: {econ_kr}",
@@ -56,24 +56,14 @@ async def send_message(text: str) -> bool:
     return True
 
 
-async def send_photo(image_bytes: bytes, caption: str = "") -> bool:
-    """이미지 알림 — 콘솔에 캡션만 출력."""
-    if caption:
-        logger.info(caption)
-        print(caption)
-    logger.info("[차트 이미지 생성됨 (%d bytes)]", len(image_bytes))
-    return True
-
-
 async def notify_signal(
     trigger: TriggerEvent,
     verdict: LLMVerdict,
-    kelly_pct: float,
+    risk_pct: float,
     position_amount: float,
-    chart_bytes: bytes | None = None,
 ) -> bool:
     """트레이딩 신호 알림."""
-    message = _build_signal_message(trigger, verdict, kelly_pct, position_amount)
+    message = _build_signal_message(trigger, verdict, risk_pct, position_amount)
     print(message)
     logger.info(message)
     return True

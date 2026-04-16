@@ -3,7 +3,7 @@ ICT 자동 트레이딩 시스템 — 메인 루프.
 
 세션 체크 → 경제지표 잠금 → 유니버스 순회 → 스킵 조건 →
 멀티TF 데이터 수집 → 알고리즘 탑다운 분석 → TriggerEvent 생성 →
-상위 3개 LLM 검토 (비동기) → PASS 시 켈리 사이징 → 주문 실행 →
+상위 3개 LLM 검토 (비동기) → PASS 시 리스크 사이징 → 주문 실행 →
 Telegram 알림 → 포지션 등록 → 포지션 동기화 → 루프 통계 로깅
 """
 
@@ -30,9 +30,7 @@ from ict_trader.data.economic_calendar import (
     get_upcoming_events,
 )
 from ict_trader.algorithm.session import is_session_active, get_current_session, get_session_display_name
-from ict_trader.algorithm.market_structure import analyze as ms_analyze
 from ict_trader.algorithm.trigger import analyze_topdown, TriggerEvent
-from ict_trader.chart.visualizer import generate_chart_for_trigger
 from ict_trader.llm.analyzer import analyze_signal, LLMVerdict
 from ict_trader.execution.gate_executor import (
     calculate_bet_fraction,
@@ -96,12 +94,8 @@ def _signal_handler(sig, frame) -> None:
 
 async def _process_trigger(
     trigger: TriggerEvent,
-    chart_base64: str | None,
-    chart_bytes: bytes | None,
     news_list: list[dict],
     econ_events: list[dict],
-    htf_ms_result,
-    ltf_ms_result,
     position_manager: PositionManager,
     loop_state: LoopState,
 ) -> None:
@@ -115,7 +109,7 @@ async def _process_trigger(
         loop_state.mark_llm_start(symbol)
 
         # LLM 검토
-        verdict = await analyze_signal(trigger, chart_base64, news_list, econ_events)
+        verdict = await analyze_signal(trigger, news_list, econ_events)
         loop_state.mark_llm_done(symbol, verdict.verdict, verdict.wait_minutes)
 
         logger.info(
@@ -125,7 +119,7 @@ async def _process_trigger(
 
         if verdict.verdict == "PASS":
             await _execute_pass(
-                trigger, verdict, chart_bytes,
+                trigger, verdict,
                 position_manager, loop_state,
             )
         else:
@@ -142,23 +136,21 @@ async def _process_trigger(
 async def _execute_pass(
     trigger: TriggerEvent,
     verdict: LLMVerdict,
-    chart_bytes: bytes | None,
     position_manager: PositionManager,
     loop_state: LoopState,
 ) -> None:
-    """PASS 판정 → 켈리 사이징 → 주문 실행 → 알림.
+    """PASS 판정 → 리스크 사이징 → 주문 실행 → 알림.
     Lock으로 직렬화: 동시에 여러 PASS가 와도 증거금 한도 초과 방지.
     """
     async with _execution_lock:
         await _execute_pass_locked(
-            trigger, verdict, chart_bytes, position_manager, loop_state
+            trigger, verdict, position_manager, loop_state
         )
 
 
 async def _execute_pass_locked(
     trigger: TriggerEvent,
     verdict: LLMVerdict,
-    chart_bytes: bytes | None,
     position_manager: PositionManager,
     loop_state: LoopState,
 ) -> None:
@@ -223,17 +215,16 @@ async def _execute_pass_locked(
     loop_state.mark_filled(symbol)
 
     # Telegram 알림
-    kelly_pct = bet_f * 100
+    risk_pct = bet_f * 100
     await notify_signal(
-        trigger, verdict, kelly_pct,
+        trigger, verdict, risk_pct,
         order_result.get("amount", amount),
-        chart_bytes,
     )
 
     logger.info(
-        "체결 완료: %s %s %.6f @ $%.2f | 켈리 %.1f%% | 증거금 $%.2f",
+        "체결 완료: %s %s %.6f @ $%.2f | 리스크 %.1f%% | 증거금 $%.2f",
         symbol, trigger.direction, order_result.get("amount", amount),
-        trigger.entry_price, kelly_pct, margin,
+        trigger.entry_price, risk_pct, margin
     )
 
 
@@ -337,21 +328,10 @@ async def _run_one_cycle(
 
         loop_state.mark_signal_generated(symbol)
 
-        # 차트 생성
-        try:
-            htf_ms = ms_analyze(htf_df, 5)
-            ltf_ms = ms_analyze(ltf_df, 3)
-            chart_b64, chart_bytes = generate_chart_for_trigger(
-                trigger, htf_df, ltf_df, htf_ms, ltf_ms,
-            )
-        except Exception as e:
-            logger.warning("%s 차트 생성 실패: %s", symbol, e)
-            chart_b64, chart_bytes = None, None
-
         # 뉴스 수집
         news_list = fetch_news(symbol)
 
-        triggers.append((trigger, chart_b64, chart_bytes, news_list))
+        triggers.append((trigger, news_list))
 
         logger.info(
             "신호 감지: %s %s %s | 점수=%d(%s) R:R=1:%.1f",
@@ -371,11 +351,10 @@ async def _run_one_cycle(
 
     # 9. 비동기 LLM 검토 + 실행 (루프 블로킹 없음)
     tasks = []
-    for trigger, chart_b64, chart_bytes, news_list in top_triggers:
+    for trigger, news_list in top_triggers:
         task = asyncio.create_task(
             _process_trigger(
-                trigger, chart_b64, chart_bytes, news_list, econ_events,
-                None, None,  # htf_ms, ltf_ms (이미 차트에 반영됨)
+                trigger, news_list, econ_events,
                 position_manager, loop_state,
             )
         )

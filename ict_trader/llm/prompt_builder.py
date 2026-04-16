@@ -126,36 +126,3 @@ def build_prompt(
     return "\n".join(parts)
 
 
-def build_message_content(
-    prompt_text: str,
-    chart_base64: str | None = None,
-) -> list[dict]:
-    """
-    Claude API messages 형식의 content 블록을 생성한다.
-    텍스트 + (선택) 이미지.
-
-    Args:
-        prompt_text: 텍스트 프롬프트
-        chart_base64: 차트 이미지 base64 (없으면 텍스트만)
-
-    Returns:
-        content 블록 리스트
-    """
-    content: list[dict] = []
-
-    if chart_base64:
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/png",
-                "data": chart_base64,
-            },
-        })
-
-    content.append({
-        "type": "text",
-        "text": prompt_text,
-    })
-
-    return content

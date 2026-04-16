@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import asyncio
 import logging
-import tempfile
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -155,22 +154,12 @@ def _parse_response(text: str) -> LLMVerdict:
 async def _call_claude_cli(
     prompt_text: str,
     system_prompt: str,
-    chart_image_path: str | None = None,
 ) -> str:
     """
     Claude CLI를 subprocess로 호출한다.
     Claude Max 로그인 상태에서 'claude -p' 사용.
-    차트 이미지 파일이 있으면 프롬프트에 경로 포함.
     """
-    # 차트 이미지가 있으면 프롬프트에 파일 참조 추가
-    if chart_image_path:
-        full_prompt = (
-            f"{system_prompt}\n\n---\n\n"
-            f"첨부된 차트 이미지를 참고하세요: {chart_image_path}\n\n"
-            f"{prompt_text}"
-        )
-    else:
-        full_prompt = f"{system_prompt}\n\n---\n\n{prompt_text}"
+    full_prompt = f"{system_prompt}\n\n---\n\n{prompt_text}"
 
     cmd = f"claude -p --model {LLM_CLI_MODEL}"
 
@@ -208,14 +197,10 @@ async def _call_claude_cli(
 
 async def analyze_signal(
     trigger: TriggerEvent,
-    chart_base64: str | None,
     news_list: list[dict],
     econ_events: list[dict],
 ) -> LLMVerdict:
-    """
-    단일 신호를 Claude CLI로 검토 요청한다.
-    차트 이미지가 있으면 임시 파일로 저장하여 CLI에 전달.
-    """
+    """단일 신호를 Claude CLI로 검토 요청한다."""
     sem = _get_semaphore()
 
     async with sem:
@@ -226,21 +211,8 @@ async def analyze_signal(
             trigger.symbol, trigger.direction, trigger.entry_type, trigger.rr_ratio,
         )
 
-        # 차트 이미지를 임시 파일로 저장
-        chart_path = None
-        if chart_base64:
-            try:
-                import base64
-                chart_bytes = base64.b64decode(chart_base64)
-                chart_path = str(BASE_DIR / "chart_temp.png")
-                with open(chart_path, "wb") as f:
-                    f.write(chart_bytes)
-            except Exception as e:
-                logger.warning("차트 임시 파일 저장 실패: %s", e)
-                chart_path = None
-
         try:
-            response_text = await _call_claude_cli(prompt_text, SYSTEM_PROMPT, chart_path)
+            response_text = await _call_claude_cli(prompt_text, SYSTEM_PROMPT)
             verdict = _parse_response(response_text)
 
             logger.info(
@@ -275,13 +247,6 @@ async def analyze_signal(
             )
             _save_decision(trigger, verdict)
             return verdict
-        finally:
-            # 차트 임시 파일 삭제 (멱등성)
-            if chart_path:
-                try:
-                    os.remove(chart_path)
-                except OSError:
-                    pass
 
 
 async def analyze_signals_batch(
@@ -292,8 +257,8 @@ async def analyze_signals_batch(
     세마포어로 LLM_MAX_CONCURRENT 제한.
     """
     tasks = [
-        analyze_signal(trigger, chart_b64, news, econ)
-        for trigger, chart_b64, news, econ in triggers
+        analyze_signal(trigger, news, econ)
+        for trigger, news, econ in triggers
     ]
 
     verdicts = await asyncio.gather(*tasks, return_exceptions=True)
