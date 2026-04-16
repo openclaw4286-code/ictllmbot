@@ -38,6 +38,7 @@ from ict_trader.execution.gate_executor import (
     calculate_optimal_leverage,
     execute_order,
     get_balance,
+    get_free_balance,
 )
 from ict_trader.execution.position_manager import PositionManager
 from ict_trader.execution.notifier import (
@@ -223,12 +224,12 @@ async def _execute_pass_locked(
     if amount <= 0:
         return
 
-    # 담보 잔여량 체크 (이번 margin 추가하면 잔고 초과하는지)
-    total_used = position_manager.get_margin_usage() * balance
-    if total_used + margin > balance:
+    # 담보 잔여량 체크 (free 기준, Gate.io가 주문 거부 방지)
+    free = await get_free_balance()
+    if margin > free:
         logger.info(
-            "%s: 담보 부족 (기사용 $%.2f + 필요 $%.2f > 잔고 $%.2f), 진입 안 함",
-            symbol, total_used, margin, balance,
+            "%s: 담보 부족 (필요 $%.2f > 사용가능 $%.2f / 전재산 $%.2f), 진입 안 함",
+            symbol, margin, free, balance,
         )
         return
 

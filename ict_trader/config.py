@@ -120,7 +120,7 @@ LTF_CANDLE_LIMIT = 200
 # L = min(LEVERAGE_MAX, 1 / (SL거리 × LIQUIDATION_SAFETY_BUFFER))
 LEVERAGE_MAX = 50                    # 상한 (거래소 알트코인 한도 수준)
 LEVERAGE_MIN = 3                     # 하한
-LIQUIDATION_SAFETY_BUFFER = 3.0      # 청산이 SL의 3배 이상 멀리 있도록 (플래시 크래시 대응)
+LIQUIDATION_SAFETY_BUFFER = 1.0      # 청산이 SL보다 멀도록 (1.0 = SL과 동일 거리, 최대 레버리지)
 
 # ICT 표준 리스크 관리: Fixed Fractional (2% 룰)
 RISK_PER_TRADE = 0.02                # 거래당 리스크 (자산의 2%, 공격적)

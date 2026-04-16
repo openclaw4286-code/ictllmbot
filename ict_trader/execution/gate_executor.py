@@ -423,7 +423,10 @@ async def execute_order(
 
 
 async def get_balance() -> float:
-    """Gate.io USDT 잔액을 조회한다."""
+    """
+    Gate.io USDT 총 자산(equity)을 조회한다.
+    리스크 계산용 — 포지션 증거금 포함한 전재산.
+    """
     if PAPER_TRADING:
         logger.debug("[PAPER] 잔액 조회: $10,000 (모의)")
         return 10000.0
@@ -432,11 +435,26 @@ async def get_balance() -> float:
         exchange = await get_exchange()
         balance = await exchange.fetch_balance()
         usdt = balance.get("USDT", {})
-        free = float(usdt.get("free", 0))
-        logger.debug("잔액 조회: $%.2f USDT", free)
-        return free
+        total = float(usdt.get("total", 0))
+        logger.debug("총 자산: $%.2f USDT", total)
+        return total
     except Exception as e:
         logger.error("잔액 조회 실패: %s", e)
+        return 0.0
+
+
+async def get_free_balance() -> float:
+    """Gate.io USDT 사용 가능 잔액 — 신규 포지션 margin 체크용."""
+    if PAPER_TRADING:
+        return 10000.0
+
+    try:
+        exchange = await get_exchange()
+        balance = await exchange.fetch_balance()
+        usdt = balance.get("USDT", {})
+        return float(usdt.get("free", 0))
+    except Exception as e:
+        logger.error("사용 가능 잔액 조회 실패: %s", e)
         return 0.0
 
 
