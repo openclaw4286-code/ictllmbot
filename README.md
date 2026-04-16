@@ -10,7 +10,6 @@ ICT(Inner Circle Trader) 전략 기반 암호화폐 선물 자동매매 봇.
 | 언어 | Python 3.9+ (asyncio) |
 | 거래소 | Gate.io 선물 (ccxt) |
 | 유니버스 | CoinGecko 시총 상위 30개 (스테이블코인 제외, 1시간 캐시) |
-| 차트 | mplfinance → base64 (Claude Vision용) |
 | 뉴스 | CoinDesk/CoinTelegraph RSS (5분 캐시) |
 | 경제 캘린더 | 정기 이벤트 + FXStreet RSS |
 | LLM | Claude CLI (`claude -p --model opus`, Max 구독) |
@@ -43,9 +42,6 @@ ict_trader/
 │   ├── pdhl.py              # PDH/PDL Sweep
 │   ├── iofed.py             # IOFED 패턴 (연속봉 후 반전)
 │   └── trigger.py           # 3단계 탑다운 → TriggerEvent 생성
-│
-├── chart/
-│   └── visualizer.py        # 4H+5M 듀얼 캔들차트 (OB/FVG/SL/TP 마킹)
 │
 ├── llm/
 │   ├── prompt_builder.py    # 시스템 프롬프트 + 신호/뉴스/경제지표 텍스트
@@ -371,9 +367,8 @@ TriggerEvent(
         Confluence("LTF FVG CE 진입"),
         Confluence("HTF+MTF POI 겹침", "1쌍"),
     ],
-    htf_obs=[...], htf_fvgs=[...],   # 차트 시각화용
+    htf_obs=[...], htf_fvgs=[...],   # LLM 프롬프트용
     mtf_obs=[...], mtf_fvgs=[...],
-    ...
 )
 ```
 
@@ -414,21 +409,18 @@ LLM은 **방향/진입가/SL/TP를 결정하지 않는다**. 알고리즘이 모
 
 LLM에 전달되는 데이터:
 
-| 항목 | 내용 | 상태 |
-|---|---|---|
-| 시스템 프롬프트 | ICT 분석가 역할 정의, JSON 응답 형식 지시 | 전달됨 |
-| 신호 텍스트 | 심볼, 방향, 진입가/SL/TP, R:R, 세션, 컨플루언스 목록 | 전달됨 |
-| 뉴스 | CoinDesk/CoinTelegraph RSS에서 해당 코인 최근 5건 | 전달됨 |
-| 경제지표 | 향후 4시간 내 고영향 이벤트 | 전달됨 |
-| 차트 이미지 | 4H+5M 듀얼 캔들차트 (OB/FVG/SL/TP 마킹) | **미전달** (생성은 됨, CLI 제약) |
+| 항목 | 내용 |
+|---|---|
+| 시스템 프롬프트 | ICT 분석가 역할 정의, JSON 응답 형식 지시 |
+| 신호 텍스트 | 심볼, 방향, 진입가/SL/TP, R:R, 세션, 컨플루언스 목록 |
+| 뉴스 | CoinDesk/CoinTelegraph RSS에서 해당 코인 최근 5건 |
+| 경제지표 | 향후 4시간 내 고영향 이벤트 |
 
-> **참고**: 차트 이미지는 `chart/visualizer.py`에서 생성되지만, `claude -p` CLI 모드에서
-> stdin으로 이미지를 전달하는 방법이 없어 현재 텍스트만 전달됨.
-> LLM은 텍스트 기반으로만 판단.
+LLM은 텍스트 기반으로만 판단. ICT 분석은 알고리즘이 이미 수행했으므로 차트 불필요.
 
 ### LLM 판단 기준 (시스템 프롬프트에 명시)
 
-1. 차트 ICT 구조가 알고리즘 분석과 일치하는지
+1. 컨플루언스 구성이 합리적인지
 2. 뉴스가 포지션 방향에 역행하지 않는지
 3. 고영향 경제지표가 임박해 변동성 리스크 있는지
 4. 전반적 시장 컨텍스트가 진입에 적합한지
@@ -717,7 +709,6 @@ Position(
   ├─ 스킵 조건 4가지 체크
   ├─ HTF/MTF/LTF OHLCV 동시 수집 (asyncio.gather)
   ├─ 3단계 탑다운 분석 → TriggerEvent 또는 None
-  ├─ 차트 생성 (4H+5M 듀얼, base64+bytes)
   └─ 뉴스 수집 (RSS, 해당 코인 필터링)
   → triggers 리스트에 추가
 
@@ -1010,7 +1001,6 @@ if total_used + margin > balance:
 | `trigger.py` | MTF BOS/CHoCH + OB/FVG 모두 없음 | 해당 심볼 스킵 |
 | `trigger.py` | LTF 진입 조건 3가지 모두 미충족 | 해당 심볼 스킵 |
 | `trigger.py` | R:R < 최소 기준 | 해당 심볼 스킵 |
-| `visualizer.py` | 차트 생성 실패 | 경고 로그, chart=None으로 계속 |
 
 ### LLM 단계
 
