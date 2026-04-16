@@ -145,13 +145,22 @@ def _parse_response(text: str) -> LLMVerdict:
 async def _call_claude_cli(
     prompt_text: str,
     system_prompt: str,
+    chart_image_path: str | None = None,
 ) -> str:
     """
     Claude CLI를 subprocess로 호출한다.
     Claude Max 로그인 상태에서 'claude -p' 사용.
-    shell=True로 실행하여 PATH 환경 상속.
+    차트 이미지 파일이 있으면 프롬프트에 경로 포함.
     """
-    full_prompt = f"{system_prompt}\n\n---\n\n{prompt_text}"
+    # 차트 이미지가 있으면 프롬프트에 파일 참조 추가
+    if chart_image_path:
+        full_prompt = (
+            f"{system_prompt}\n\n---\n\n"
+            f"첨부된 차트 이미지를 참고하세요: {chart_image_path}\n\n"
+            f"{prompt_text}"
+        )
+    else:
+        full_prompt = f"{system_prompt}\n\n---\n\n{prompt_text}"
 
     cmd = f"claude -p --model {LLM_CLI_MODEL}"
 
@@ -195,15 +204,7 @@ async def analyze_signal(
 ) -> LLMVerdict:
     """
     단일 신호를 Claude CLI로 검토 요청한다.
-
-    Args:
-        trigger: 알고리즘 트리거 이벤트
-        chart_base64: 차트 이미지 base64 (현재 CLI 모드에서는 미사용)
-        news_list: 뉴스 리스트
-        econ_events: 경제지표 이벤트
-
-    Returns:
-        LLMVerdict
+    차트 이미지가 있으면 임시 파일로 저장하여 CLI에 전달.
     """
     sem = _get_semaphore()
 
@@ -211,12 +212,25 @@ async def analyze_signal(
         prompt_text = build_prompt(trigger, news_list, econ_events)
 
         logger.info(
-            "LLM 검토 요청 (Claude CLI): %s %s %s (점수=%d)",
+            "LLM 검토 요청 (Claude CLI): %s %s %s R:R=%.2f",
             trigger.symbol, trigger.direction, trigger.entry_type, trigger.rr_ratio,
         )
 
+        # 차트 이미지를 임시 파일로 저장
+        chart_path = None
+        if chart_base64:
+            try:
+                import base64
+                chart_bytes = base64.b64decode(chart_base64)
+                chart_path = str(BASE_DIR / "chart_temp.png")
+                with open(chart_path, "wb") as f:
+                    f.write(chart_bytes)
+            except Exception as e:
+                logger.warning("차트 임시 파일 저장 실패: %s", e)
+                chart_path = None
+
         try:
-            response_text = await _call_claude_cli(prompt_text, SYSTEM_PROMPT)
+            response_text = await _call_claude_cli(prompt_text, SYSTEM_PROMPT, chart_path)
             verdict = _parse_response(response_text)
 
             logger.info(
@@ -250,6 +264,13 @@ async def analyze_signal(
             )
             _save_decision(trigger, verdict)
             return verdict
+        finally:
+            # 차트 임시 파일 삭제 (멱등성)
+            if chart_path:
+                try:
+                    os.remove(chart_path)
+                except OSError:
+                    pass
 
 
 async def analyze_signals_batch(

@@ -82,6 +82,7 @@ logger = logging.getLogger(__name__)
 
 _shutdown = False
 _execution_lock = asyncio.Lock()  # 주문 실행 직렬화용
+_last_session: str | None = None  # 세션 변경 감지용
 
 
 def _signal_handler(sig, frame) -> None:
@@ -281,10 +282,22 @@ async def _run_one_cycle(
     """루프 1회 실행."""
 
     # 1. 세션 체크
+    global _last_session
     session = get_current_session()
     if not is_session_active():
         logger.debug("세션 외 시간, 스킵 (%s)", get_session_display_name(session))
+        _last_session = None  # 세션 밖으로 나가면 리셋 준비
         return
+
+    # 세션 전환 감지 → 모든 심볼 WAIT 카운트 리셋
+    if session != _last_session:
+        if _last_session is not None:
+            logger.info("세션 전환: %s → %s, WAIT 카운트 전체 리셋",
+                        get_session_display_name(_last_session),
+                        get_session_display_name(session))
+            for sym in list(loop_state._symbols.keys()):
+                loop_state.reset_wait_count(sym)
+        _last_session = session
 
     # 2. 경제지표 잠금 체크
     if is_economic_lock_active():
