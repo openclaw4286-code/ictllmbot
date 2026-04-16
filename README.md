@@ -921,3 +921,208 @@ print(f'총 {len(data)}건, 승 {wins}, 패 {len(data)-wins}')
 if data: print(f'승률: {wins/len(data)*100:.1f}%')
 "
 ```
+
+---
+
+## 리스크 관리 상세
+
+### Fixed Fractional (2% 룰) 원리
+
+**"거래당 SL 터치 시 잃을 금액 = 자산의 2%"**
+
+이게 전부. 레버리지/포지션 크기/동시 포지션 수는 모두 여기서 파생:
+
+```
+① 리스크 금액 = 잔고 × 2%                        ← 고정
+② 포지션 크기(notional) = 리스크 / SL거리%         ← SL에 따라 변동
+③ 레버리지 = min(50, 1/(SL×3))                    ← SL에 따라 자동
+④ 증거금(margin) = notional / 레버리지              ← 파생 결과
+⑤ 동시 포지션 = 잔고 / margin (담보 남는 한)        ← 자연 결정
+```
+
+### 리스크 = 일정, 나머지는 SL이 결정
+
+| SL 거리 | 리스크 | notional | 레버리지 | margin | $100에서 최대 포지션 수 |
+|---|---|---|---|---|---|
+| 0.5% | $2 | $400 | 50x | $8 | 12개 |
+| 1% | $2 | $200 | 33x | $6 | 16개 |
+| 2% | $2 | $100 | 16x | $6.25 | 16개 |
+| 3% | $2 | $67 | 11x | $6 | 16개 |
+| 5% | $2 | $40 | 6x | $6.67 | 15개 |
+
+**포인트**: 리스크($2)는 항상 같음. SL이 짧으면 큰 포지션 → 높은 레버리지 → 많은 증거금.
+
+### 레버리지와 청산
+
+| 항목 | 공식 | 의미 |
+|---|---|---|
+| 청산 거리 | ~1/레버리지 | 레버리지 16x → 약 6.3% 역행 시 청산 |
+| 안전 배수 | 3.0 | 청산 거리는 SL의 3배 이상 |
+| SL 2% → 청산 6% | SL 터치 시점에 충분한 여유 | 플래시 크래시 3% 발생해도 청산 안 됨 |
+
+### 담보 기반 자연 제한
+
+동시 포지션 수는 설정으로 제한하지 않음. 담보가 떨어지면 자연 중단:
+
+```python
+total_used = position_manager.get_margin_usage() * balance
+if total_used + margin > balance:
+    return  # 담보 부족, 이번 포지션 스킵
+```
+
+거래소도 추가로 거부 (margin insufficient error).
+
+---
+
+## 에러 처리 총정리
+
+### 데이터 수집 단계
+
+| 모듈 | 에러 | 처리 |
+|---|---|---|
+| `universe.py` | CoinGecko API 실패 | 이전 캐시 반환 (만료돼도) |
+| `universe.py` | Gate.io 마켓 로드 실패 | 필터 비활성, 모든 심볼 통과 |
+| `fetcher.py` | 특정 TF OHLCV 실패 | 해당 TF만 빈 DataFrame |
+| `fetcher.py` | 3TF 중 하나 빈 DataFrame | 해당 심볼 탑다운 분석 스킵 |
+| `fetcher.py` | 거래소 연결 실패 | 해당 심볼 스킵, 에러 로그 |
+| `news.py` | RSS 피드 실패 | 피드별 독립, 실패한 피드 스킵 |
+| `news.py` | 해당 코인 뉴스 0건 | 전체 뉴스 상위 5건 폴백 |
+| `economic_calendar.py` | FXStreet RSS 실패 | 정기 이벤트만으로 판정 |
+
+### 알고리즘 단계
+
+| 모듈 | 상황 | 처리 |
+|---|---|---|
+| `market_structure.py` | 데이터 < `swing_bars×2+1` 봉 | 빈 결과 반환, 분석 불가 |
+| `trigger.py` | HTF 추세 neutral | 해당 심볼 스킵 |
+| `trigger.py` | MTF BOS/CHoCH + OB/FVG 모두 없음 | 해당 심볼 스킵 |
+| `trigger.py` | LTF 진입 조건 3가지 모두 미충족 | 해당 심볼 스킵 |
+| `trigger.py` | R:R < 최소 기준 | 해당 심볼 스킵 |
+| `visualizer.py` | 차트 생성 실패 | 경고 로그, chart=None으로 계속 |
+
+### LLM 단계
+
+| 상황 | verdict | 주문 실행 | llm_decisions.json |
+|---|---|---|---|
+| LLM 정상 → PASS | PASS | **실행** | 기록 |
+| LLM 정상 → REJECT | REJECT | 스킵 | 기록 |
+| LLM 정상 → WAIT | WAIT | 스킵 | 기록 |
+| 타임아웃 (120초) | WAIT | 스킵 | 기록 (error="timeout") |
+| Claude CLI 에러 (code≠0) | REJECT | 스킵 | 기록 (error=메시지) |
+| JSON 파싱 실패 | REJECT | 스킵 | 기록 (error=파싱에러) |
+| 알 수 없는 verdict 문자열 | REJECT | 스킵 | 기록 |
+| 그 외 예외 | REJECT | 스킵 | 기록 |
+
+**LLM 실패 시 자동 PASS는 절대 없음.**
+
+### 주문 실행 단계
+
+| 상황 | 처리 |
+|---|---|
+| `calculate_bet_fraction` | 항상 RISK_PER_TRADE(2%) 반환 (실패 없음) |
+| `get_balance()` 실패 | $0 반환 → margin 0 → 진입 안 함 |
+| 담보 부족 (기사용 + 신규 > 잔고) | 로그, 진입 안 함 |
+| `get_tick_size()` 실패 | 에러 로그, 진입 안 함 |
+| 정밀도 조정 후 수량 0 | 주문 취소, None 반환 |
+| 레버리지 설정 실패 | 경고 로그, 기존값으로 진행 |
+| 시장가 주문 실패 | None 반환 (SL/TP도 안 걸림) |
+| SL 주문 실패 | 에러 로그, **시장가는 이미 체결됨** |
+| TP 주문 실패 | 에러 로그, **시장가는 이미 체결됨** |
+| PAPER_TRADING=True | 실제 주문 없이 로그만 기록 |
+
+**SL/TP 실패 시 주의**: 시장가는 체결됐지만 SL/TP가 안 걸린 상태. 수동 SL/TP 설정 또는 포지션 청산 필요.
+
+### 포지션 관리 단계
+
+| 상황 | 처리 |
+|---|---|
+| 거래소 포지션 조회 실패 | 에러 로그, 이번 동기화 스킵 |
+| TP 주문 상태 조회 실패 | SL 조회로 넘어감 |
+| SL 주문 상태 조회 실패 | 현재가 vs 진입가 비교로 폴백 |
+| 현재가 조회도 실패 | **패로 처리** (보수적) |
+| PAPER_TRADING | 거래소 동기화 전체 스킵 |
+
+### 메인 루프 단계
+
+| 상황 | 처리 |
+|---|---|
+| 세션 외 / 주말 | 즉시 return (다음 60초 후 재시도) |
+| 경제지표 잠금 | 즉시 return |
+| 유니버스 비어있음 | 경고 로그, return |
+| 심볼별 OHLCV 실패 | 해당 심볼 스킵, 나머지 계속 |
+| 탑다운 분석 중 예외 | 해당 심볼 스킵 |
+| `_process_trigger` 예외 | 에러 로그, REJECT 처리 |
+| 루프 전체 예외 | 에러 로그 + 알림, 루프 계속 (봇 안 죽음) |
+| SIGINT/SIGTERM | `_shutdown=True`, 현재 주문 완료 후 종료 |
+
+---
+
+## 설치 및 실행
+
+### 필요 사항
+
+- Python 3.9+
+- Node.js 18+ (Claude CLI용)
+- Claude Max 구독 (터미널 로그인)
+- Gate.io API 키 (선물 권한)
+- Gate.io 선물 계좌에 USDT
+
+### 설치
+
+```bash
+git clone https://github.com/openclaw4286-code/ictllmbot.git
+cd ictllmbot
+git checkout claude/ict-trading-system-Ghpxm
+
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r ict_trader/requirements.txt
+
+npm install -g @anthropic-ai/claude-code
+claude login
+```
+
+### .env 설정
+
+```bash
+cat > ict_trader/.env <<EOF
+GATE_API_KEY=실제_API_키
+GATE_API_SECRET=실제_SECRET
+EOF
+```
+
+### 실행
+
+```bash
+python3 -m ict_trader.main
+```
+
+### 백그라운드 실행 (터미널 닫아도 유지)
+
+```bash
+nohup python3 -m ict_trader.main > bot.log 2>&1 &
+tail -f bot.log        # 로그 확인
+pkill -f "ict_trader"  # 종료
+```
+
+### 전체 포지션 청산 (긴급)
+
+```python
+# Google Colab 또는 Python에서:
+import ccxt
+exchange = ccxt.gateio({
+    "apiKey": "KEY", "secret": "SECRET",
+    "options": {"defaultType": "swap"},
+})
+for pos in exchange.fetch_positions():
+    if float(pos.get("contracts", 0)) > 0:
+        side = "sell" if pos["side"] == "long" else "buy"
+        exchange.create_order(
+            pos["symbol"], "market", side,
+            float(pos["contracts"]),
+            float(pos.get("entryPrice", 0)),
+            params={"reduceOnly": True},
+        )
+```
+```
