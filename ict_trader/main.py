@@ -166,18 +166,9 @@ async def _execute_pass_locked(
     loop_state: LoopState,
 ) -> None:
     """Lock 내부 실행 로직."""
-    from ict_trader.config import MAX_CONCURRENT_POSITIONS
     symbol = trigger.symbol
 
-    # 동시 포지션 수 제한
-    if position_manager.position_count >= MAX_CONCURRENT_POSITIONS:
-        logger.info(
-            "%s: 동시 포지션 한도 도달 (%d/%d), 진입 안 함",
-            symbol, position_manager.position_count, MAX_CONCURRENT_POSITIONS,
-        )
-        return
-
-    # 켈리 사이징
+    # 리스크 비율 계산
     bet_f = calculate_bet_fraction(trigger.rr_ratio)
     if bet_f <= 0:
         return
@@ -193,6 +184,15 @@ async def _execute_pass_locked(
         balance, bet_f, trigger.entry_price, trigger.stop_loss, current_usage, leverage,
     )
     if amount <= 0:
+        return
+
+    # 담보 잔여량 체크 (이번 margin 추가하면 잔고 초과하는지)
+    total_used = position_manager.get_margin_usage() * balance
+    if total_used + margin > balance:
+        logger.info(
+            "%s: 담보 부족 (기사용 $%.2f + 필요 $%.2f > 잔고 $%.2f), 진입 안 함",
+            symbol, total_used, margin, balance,
+        )
         return
 
     # tick_size 정보 조회 & 주문 실행

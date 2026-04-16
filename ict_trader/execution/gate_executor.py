@@ -13,7 +13,7 @@ import asyncio
 from ict_trader.config import (
     LEVERAGE_MIN, LEVERAGE_MAX, LIQUIDATION_SAFETY_BUFFER,
     PAPER_TRADING,
-    RISK_PER_TRADE, MAX_CONCURRENT_POSITIONS,
+    RISK_PER_TRADE,
 )
 from ict_trader.data.fetcher import get_exchange, get_tick_size
 from ict_trader.algorithm.trigger import TriggerEvent

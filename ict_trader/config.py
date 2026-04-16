@@ -71,7 +71,7 @@ EXCHANGE_ID = "gateio"
 # ──────────────────────────────────────────────
 # 유니버스
 # ──────────────────────────────────────────────
-UNIVERSE_TOP_N = 20                  # 시총 상위 N개
+UNIVERSE_TOP_N = 30                  # 시총 상위 N개
 UNIVERSE_CACHE_TTL = 3600            # 1시간 캐시 (초)
 UNIVERSE_EXCLUDE_STABLECOINS = True  # 스테이블코인 제외
 
@@ -118,7 +118,7 @@ LIQUIDATION_SAFETY_BUFFER = 3.0      # 청산이 SL의 3배 이상 멀리 있도
 
 # ICT 표준 리스크 관리: Fixed Fractional (2% 룰)
 RISK_PER_TRADE = 0.02                # 거래당 리스크 (자산의 2%, 공격적)
-MAX_CONCURRENT_POSITIONS = 10        # 동시 보유 최대 포지션 수
+# 동시 포지션 수 제한 없음 — 담보금이 남아있는 한 계속 진입
 
 # ──────────────────────────────────────────────
 # 알고리즘 파라미터 세트
