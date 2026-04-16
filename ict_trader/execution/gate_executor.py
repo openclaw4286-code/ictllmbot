@@ -11,7 +11,8 @@ import logging
 import asyncio
 
 from ict_trader.config import (
-    LEVERAGE, KELLY_FLOOR, PAPER_TRADING,
+    LEVERAGE_MIN, LEVERAGE_MAX, LIQUIDATION_SAFETY_BUFFER,
+    KELLY_FLOOR, PAPER_TRADING,
     SIZING_MIN_SAMPLES, SIZING_BACKTEST_WIN_RATE,
     SIZING_MAX_FRACTION, SIZING_MAX_TOTAL_EXPOSURE,
     MAX_CONCURRENT_POSITIONS,
@@ -210,8 +211,22 @@ def calculate_optimal_leverage(
     Returns:
         최적 레버리지 (정수)
     """
-    # 레버리지는 config의 LEVERAGE로 고정
-    return LEVERAGE
+    # 동적 레버리지: 청산 버퍼 확보 가능한 최대 레버리지
+    # 청산가가 SL보다 LIQUIDATION_SAFETY_BUFFER배 이상 멀도록 함
+    sl_distance = abs(entry_price - stop_loss) / entry_price
+    if sl_distance <= 0:
+        return LEVERAGE_MIN
+
+    # 최대 안전 레버리지: 1/L > SL × safety_buffer
+    # → L < 1 / (SL × safety_buffer)
+    l_max_safe = 1.0 / (sl_distance * LIQUIDATION_SAFETY_BUFFER)
+    l_final = int(max(LEVERAGE_MIN, min(LEVERAGE_MAX, l_max_safe)))
+
+    logger.info(
+        "동적 레버리지: SL=%.2f%%, 최대안전=%.1fx → L=%dx",
+        sl_distance * 100, l_max_safe, l_final,
+    )
+    return l_final
 
 
 # ──────────────────────────────────────────────
@@ -277,8 +292,10 @@ def calculate_position_size(
     margin = notional / leverage
     amount = notional / entry_price
 
-    # 전체 증거금 한도만 체크 (포지션당 한도 없음 — 각 포지션 Full Kelly 보장)
-    max_margin = balance * remaining
+    # 포지션당 margin 한도 (자산의 SIZING_MAX_FRACTION) + 전체 잔여 한도
+    per_pos_cap = balance * SIZING_MAX_FRACTION
+    remaining_cap = balance * remaining
+    max_margin = min(per_pos_cap, remaining_cap)
 
     if margin > max_margin:
         scale = max_margin / margin
@@ -286,8 +303,9 @@ def calculate_position_size(
         notional *= scale
         amount *= scale
         logger.info(
-            "전체 증거금 한도 근접, %.1f%%로 축소 (kelly=%.1f%%, sl=%.2f%%, lev=%dx)",
+            "증거금 한도 축소 %.1f%% (kelly=%.1f%%, sl=%.2f%%, lev=%dx, 포지션당상한=%.0f%%)",
             scale * 100, kelly_fraction * 100, sl_distance_pct * 100, leverage,
+            SIZING_MAX_FRACTION * 100,
         )
 
     logger.info(
@@ -306,7 +324,7 @@ async def execute_order(
     trigger: TriggerEvent,
     amount: float,
     market_info: dict,
-    leverage: int = LEVERAGE,
+    leverage: int = 10,
 ) -> dict | None:
     """
     Gate.io에 주문을 실행한다.

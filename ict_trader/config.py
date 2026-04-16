@@ -110,16 +110,20 @@ LTF_CANDLE_LIMIT = 200
 # ──────────────────────────────────────────────
 # 포지션 사이징
 # ──────────────────────────────────────────────
-LEVERAGE = 10                        # 고정 레버리지
+# 동적 레버리지: SL 거리에 따라 최대 안전 레버리지 자동 계산
+# L = min(LEVERAGE_MAX, 1 / (SL거리 × LIQUIDATION_SAFETY_BUFFER))
+LEVERAGE_MAX = 25                    # 상한 (청산 절대 안전선)
+LEVERAGE_MIN = 3                     # 하한
+LIQUIDATION_SAFETY_BUFFER = 2.0      # SL이 청산가의 1/2 이내가 되도록 (2배 여유)
 
 # 사이징 모드: 표본 부족 시 백테스트 기반 Half-Kelly, 충분하면 실측 Half-Kelly
 SIZING_MIN_SAMPLES = 20              # 이 표본 수 이상이면 실측 승률로 전환
 SIZING_BACKTEST_WIN_RATE = 0.43      # 백테스트 기반 fallback 승률 (42.9%)
 
-# 리스크 분산: 총 Kelly를 N개 포지션에 나눠 할당 (옵션 A 정적 분할)
-MAX_CONCURRENT_POSITIONS = 3         # 동시 보유 최대 포지션 수
-SIZING_MAX_FRACTION = 0.15           # 1회 최대 베팅 비율 (안전 상한)
-SIZING_MAX_TOTAL_EXPOSURE = 0.40     # 전체 증거금 합산 최대 (40%)
+# 포지션 분산
+MAX_CONCURRENT_POSITIONS = 10        # 동시 보유 최대 포지션 수
+SIZING_MAX_FRACTION = 0.10           # 1포지션당 증거금 최대 (자산의 10%)
+SIZING_MAX_TOTAL_EXPOSURE = 1.00     # 전체 증거금 합산 최대 (100% = 10포지션 × 10%)
 KELLY_FLOOR = 0.01                   # 켈리 하한 (1%)
 
 # ──────────────────────────────────────────────
