@@ -82,7 +82,6 @@ logger = logging.getLogger(__name__)
 
 _shutdown = False
 _execution_lock = asyncio.Lock()  # 주문 실행 직렬화용
-_last_session: str | None = None  # 세션 변경 감지용
 
 
 def _signal_handler(sig, frame) -> None:
@@ -117,7 +116,7 @@ async def _process_trigger(
 
         # LLM 검토
         verdict = await analyze_signal(trigger, chart_base64, news_list, econ_events)
-        loop_state.mark_llm_done(symbol, verdict.verdict)
+        loop_state.mark_llm_done(symbol, verdict.verdict, verdict.wait_minutes)
 
         logger.info(
             "LLM 결과: %s %s → %s | %s",
@@ -129,18 +128,15 @@ async def _process_trigger(
                 trigger, verdict, chart_bytes,
                 position_manager, loop_state,
             )
-        elif verdict.verdict == "WAIT":
-            logger.info(
-                "%s WAIT (%s) — 연속 %d회",
-                symbol, verdict.wait_reason or "사유 없음",
-                loop_state.get_symbol_state(symbol).wait_count,
-            )
         else:
-            logger.info("%s REJECT — %s", symbol, verdict.reasoning[:100])
+            logger.info(
+                "%s WAIT (%d분 대기) — %s",
+                symbol, verdict.wait_minutes, verdict.reasoning[:100],
+            )
 
     except Exception as e:
         logger.error("트리거 처리 예외: %s — %s", symbol, e, exc_info=True)
-        loop_state.mark_llm_done(symbol, "REJECT")
+        loop_state.mark_llm_done(symbol, "WAIT", 10)
 
 
 async def _execute_pass(
@@ -282,22 +278,10 @@ async def _run_one_cycle(
     """루프 1회 실행."""
 
     # 1. 세션 체크
-    global _last_session
     session = get_current_session()
     if not is_session_active():
         logger.debug("세션 외 시간, 스킵 (%s)", get_session_display_name(session))
-        _last_session = None  # 세션 밖으로 나가면 리셋 준비
         return
-
-    # 세션 전환 감지 → 모든 심볼 WAIT 카운트 리셋
-    if session != _last_session:
-        if _last_session is not None:
-            logger.info("세션 전환: %s → %s, WAIT 카운트 전체 리셋",
-                        get_session_display_name(_last_session),
-                        get_session_display_name(session))
-            for sym in list(loop_state._symbols.keys()):
-                loop_state.reset_wait_count(sym)
-        _last_session = session
 
     # 2. 경제지표 잠금 체크
     if is_economic_lock_active():

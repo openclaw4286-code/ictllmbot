@@ -38,11 +38,11 @@ def _get_semaphore() -> asyncio.Semaphore:
 @dataclass
 class LLMVerdict:
     """LLM 판단 결과."""
-    verdict: str            # "PASS" / "REJECT" / "WAIT"
+    verdict: str            # "PASS" / "WAIT"
     reasoning: str          # 한국어 3줄 이내
     news_impact: str        # "POSITIVE" / "NEGATIVE" / "NEUTRAL"
     econ_risk: str          # "HIGH" / "LOW"
-    wait_reason: str | None = None  # WAIT일 때만
+    wait_minutes: int = 10  # WAIT 시 대기 시간 (5~120분)
     raw_response: str = ""  # 원본 응답 (디버그용)
     error: str | None = None  # 에러 발생 시
 
@@ -69,7 +69,7 @@ def _save_decision(trigger: "TriggerEvent", verdict: LLMVerdict) -> None:
         "reasoning": verdict.reasoning,
         "news_impact": verdict.news_impact,
         "econ_risk": verdict.econ_risk,
-        "wait_reason": verdict.wait_reason,
+        "wait_minutes": verdict.wait_minutes,
         "error": verdict.error,
     }
 
@@ -119,25 +119,35 @@ def _parse_response(text: str) -> LLMVerdict:
     except json.JSONDecodeError as e:
         logger.error("LLM 응답 JSON 파싱 실패: %s — 원본: %s", e, text[:200])
         return LLMVerdict(
-            verdict="REJECT",
-            reasoning="LLM 응답 파싱 실패로 안전하게 거부",
+            verdict="WAIT",
+            reasoning="LLM 응답 파싱 실패, 10분 후 재시도",
             news_impact="NEUTRAL",
             econ_risk="LOW",
+            wait_minutes=10,
             raw_response=text,
             error=f"JSON parse error: {e}",
         )
 
-    verdict = data.get("verdict", "REJECT").upper().strip()
-    if verdict not in ("PASS", "REJECT", "WAIT"):
-        logger.warning("알 수 없는 verdict: '%s', REJECT로 처리", verdict)
-        verdict = "REJECT"
+    verdict = data.get("verdict", "WAIT").upper().strip()
+    if verdict not in ("PASS", "WAIT"):
+        # REJECT 등 다른 값 → WAIT로 변환 (10분 대기)
+        verdict = "WAIT"
+
+    # wait_minutes 파싱 (5~120 클램프)
+    wait_minutes = 10
+    if verdict == "WAIT":
+        try:
+            wm = int(data.get("wait_minutes") or 10)
+            wait_minutes = max(5, min(120, wm))
+        except (ValueError, TypeError):
+            wait_minutes = 10
 
     return LLMVerdict(
         verdict=verdict,
         reasoning=data.get("reasoning", ""),
         news_impact=data.get("news_impact", "NEUTRAL").upper(),
         econ_risk=data.get("econ_risk", "LOW").upper(),
-        wait_reason=data.get("wait_reason"),
+        wait_minutes=wait_minutes,
         raw_response=text,
     )
 
@@ -245,10 +255,10 @@ async def analyze_signal(
             logger.error("LLM 타임아웃: %s (%ds)", trigger.symbol, LLM_TIMEOUT_SECONDS)
             verdict = LLMVerdict(
                 verdict="WAIT",
-                reasoning="LLM 응답 타임아웃",
+                reasoning="LLM 응답 타임아웃, 10분 후 재시도",
                 news_impact="NEUTRAL",
                 econ_risk="LOW",
-                wait_reason="timeout",
+                wait_minutes=10,
                 error="timeout",
             )
             _save_decision(trigger, verdict)
@@ -256,10 +266,11 @@ async def analyze_signal(
         except Exception as e:
             logger.error("Claude CLI 오류: %s — %s", trigger.symbol, e)
             verdict = LLMVerdict(
-                verdict="REJECT",
-                reasoning="CLI 오류로 안전하게 거부",
+                verdict="WAIT",
+                reasoning="CLI 오류, 10분 후 재시도",
                 news_impact="NEUTRAL",
                 econ_risk="LOW",
+                wait_minutes=10,
                 error=str(e),
             )
             _save_decision(trigger, verdict)

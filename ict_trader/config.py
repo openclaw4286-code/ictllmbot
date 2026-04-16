@@ -91,8 +91,7 @@ LOOP_INTERVAL_SECONDS = 60           # 메인 루프 간격 (초)
 LLM_TIMEOUT_SECONDS = 120            # LLM 응답 타임아웃 (초)
 LLM_MAX_CONCURRENT = 3               # 동시 LLM 호출 최대 수
 ECON_LOCK_MINUTES = 30               # 경제지표 전후 잠금 시간 (분)
-SIGNAL_COOLDOWN_SECONDS = 3600       # 심볼당 마지막 신호 후 대기 시간 (초)
-LLM_WAIT_MAX_CONSECUTIVE = 3         # LLM WAIT 연속 최대 횟수
+# LLM WAIT 시 대기 시간은 LLM이 동적 결정 (5~120분)
 TOP_SIGNALS_FOR_LLM = 3              # LLM 검토할 상위 신호 수
 
 # ──────────────────────────────────────────────
