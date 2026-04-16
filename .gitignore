@@ -16,6 +16,10 @@ backtest_results/
 # Logs
 logs/
 *.log
+
+# 거래 및 LLM 판단 이력 (개인 데이터)
+ict_trader/trade_history.json
+ict_trader/llm_decisions.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

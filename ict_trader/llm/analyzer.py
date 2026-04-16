@@ -12,8 +12,10 @@ import logging
 import tempfile
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 
-from ict_trader.config import LLM_TIMEOUT_SECONDS, LLM_MAX_CONCURRENT, LLM_CLI_MODEL
+from ict_trader.config import LLM_TIMEOUT_SECONDS, LLM_MAX_CONCURRENT, LLM_CLI_MODEL, BASE_DIR
 from ict_trader.llm.prompt_builder import (
     SYSTEM_PROMPT,
     build_prompt,
@@ -43,6 +45,50 @@ class LLMVerdict:
     wait_reason: str | None = None  # WAIT일 때만
     raw_response: str = ""  # 원본 응답 (디버그용)
     error: str | None = None  # 에러 발생 시
+
+
+# LLM 판단 이력 저장
+_LLM_LOG_FILE = BASE_DIR / "llm_decisions.json"
+
+
+def _save_decision(trigger: "TriggerEvent", verdict: LLMVerdict) -> None:
+    """LLM 판단을 JSON 파일에 append 저장."""
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "symbol": trigger.symbol,
+        "direction": trigger.direction,
+        "entry_type": trigger.entry_type,
+        "entry_price": trigger.entry_price,
+        "stop_loss": trigger.stop_loss,
+        "take_profit": trigger.take_profit,
+        "rr_ratio": trigger.rr_ratio,
+        "session": trigger.session,
+        "confluences_count": len(trigger.confluences),
+        "confluences": [c.name for c in trigger.confluences],
+        "verdict": verdict.verdict,
+        "reasoning": verdict.reasoning,
+        "news_impact": verdict.news_impact,
+        "econ_risk": verdict.econ_risk,
+        "wait_reason": verdict.wait_reason,
+        "error": verdict.error,
+    }
+
+    # 기존 파일 읽기 + append
+    existing: list = []
+    if _LLM_LOG_FILE.exists():
+        try:
+            with open(_LLM_LOG_FILE, "r") as f:
+                existing = json.load(f)
+        except Exception:
+            existing = []
+
+    existing.append(entry)
+
+    try:
+        with open(_LLM_LOG_FILE, "w") as f:
+            json.dump(existing, f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        logger.error("LLM 판단 저장 실패: %s", e)
 
 
 def _parse_response(text: str) -> LLMVerdict:
@@ -178,11 +224,12 @@ async def analyze_signal(
                 trigger.symbol, trigger.direction,
                 verdict.verdict, verdict.news_impact, verdict.econ_risk,
             )
+            _save_decision(trigger, verdict)
             return verdict
 
         except asyncio.TimeoutError:
             logger.error("LLM 타임아웃: %s (%ds)", trigger.symbol, LLM_TIMEOUT_SECONDS)
-            return LLMVerdict(
+            verdict = LLMVerdict(
                 verdict="WAIT",
                 reasoning="LLM 응답 타임아웃",
                 news_impact="NEUTRAL",
@@ -190,15 +237,19 @@ async def analyze_signal(
                 wait_reason="timeout",
                 error="timeout",
             )
+            _save_decision(trigger, verdict)
+            return verdict
         except Exception as e:
             logger.error("Claude CLI 오류: %s — %s", trigger.symbol, e)
-            return LLMVerdict(
+            verdict = LLMVerdict(
                 verdict="REJECT",
                 reasoning="CLI 오류로 안전하게 거부",
                 news_impact="NEUTRAL",
                 econ_risk="LOW",
                 error=str(e),
             )
+            _save_decision(trigger, verdict)
+            return verdict
 
 
 async def analyze_signals_batch(
