@@ -670,3 +670,254 @@ Position(
 | `notify_status` | 시스템 시작/종료 |
 | `notify_error` | 에러 발생 |
 | `notify_position_closed` | 포지션 종료 (사유 + PnL) |
+
+---
+
+## 메인 루프
+
+**파일**: `main.py`
+
+### 실행 주기
+
+60초(`LOOP_INTERVAL_SECONDS`)마다 1사이클 실행. `Ctrl+C` (SIGINT) 또는 SIGTERM으로 종료.
+
+### 1사이클 상세 흐름 (`_run_one_cycle`)
+
+```
+① 세션 체크
+  → 세션 외 또는 주말이면 즉시 return
+
+② 경제지표 잠금 체크
+  → 고영향 이벤트 전후 30분이면 즉시 return
+
+③ 포지션 동기화
+  → 거래소 실제 포지션 조회, SL/TP 체결된 것 감지 → 승/패 기록
+
+④ 잔액 갱신
+  → Gate.io 선물 USDT 잔액 조회
+
+⑤ 유니버스 조회
+  → CoinGecko 시총 상위 30개 (1시간 캐시, Gate.io 마켓 검증)
+
+⑥ 심볼 순회 (30개)
+  ├─ 스킵 조건 4가지 체크
+  ├─ HTF/MTF/LTF OHLCV 동시 수집 (asyncio.gather)
+  ├─ 3단계 탑다운 분석 → TriggerEvent 또는 None
+  ├─ 차트 생성 (4H+5M 듀얼, base64+bytes)
+  └─ 뉴스 수집 (RSS, 해당 코인 필터링)
+  → triggers 리스트에 추가
+
+⑦ R:R 기준 정렬, 상위 3개만 LLM 검토 대상
+
+⑧ 비동기 LLM 검토 + 주문 실행
+  → asyncio.create_task로 병렬 LLM 호출
+  → PASS 시 _execute_pass (Lock으로 직렬화)
+  → asyncio.gather로 전부 완료 대기
+
+⑨ 루프 통계 기록 (10루프마다 요약 로깅)
+```
+
+### 세션 체크 (①)
+
+**파일**: `algorithm/session.py`
+
+| 조건 | 동작 |
+|---|---|
+| UTC 요일 ≥ 5 (토/일) | return (주말 스킵) |
+| 현재 UTC 시간이 SESSIONS에 없음 | return (세션 외) |
+| 아시아 00~02 / 런던 07~09 / 뉴욕 13~15 내 | 계속 진행 |
+
+### 경제지표 잠금 (②)
+
+**파일**: `data/economic_calendar.py`
+
+정기 이벤트 (매주 반복, UTC):
+
+| 요일 | 시간 | 이벤트 |
+|---|---|---|
+| 화 | 15:00 | US PPI / CPI |
+| 수 | 13:30 | US CPI / Retail Sales |
+| 목 | 13:30 | US Jobless Claims |
+| 금 | 13:30 | US Employment / NFP |
+| FOMC일 | 19:00 | FOMC 금리 결정 (2026년 8회 수동 등록) |
+
++ FXStreet RSS에서 "nfp", "cpi", "fomc", "gdp", "fed" 등 키워드 매칭.
+
+| 조건 | 동작 |
+|---|---|
+| `abs(현재시간 - 이벤트시간) ≤ ECON_LOCK_MINUTES` (30분) | return (잠금) |
+| 이벤트 없음 또는 30분 밖 | 계속 진행 |
+| FXStreet RSS 실패 | 정기 이벤트만으로 판정 (정상 폴백) |
+
+### 유니버스 조회 (⑤)
+
+**파일**: `data/universe.py`
+
+```
+CoinGecko API → 시총 상위 40개 요청 (스테이블코인 여유분)
+  ↓
+스테이블코인 16종 제외 (USDT, USDC, DAI, BUSD, FDUSD, ...)
+  ↓
+비표준 심볼 제외 (regex: ^[A-Z0-9]{2,10}$)
+  ↓
+Gate.io 선물 마켓에 없는 심볼 제외 (1시간 캐시)
+  ↓
+상위 30개 반환: ["BTC/USDT", "ETH/USDT", ...]
+```
+
+| 상황 | 결과 |
+|---|---|
+| CoinGecko API 실패 | 이전 캐시 반환 (만료돼도) |
+| Gate.io 마켓 로드 실패 | 필터 비활성 (모든 CoinGecko 결과 통과) |
+| 캐시 유효 (1시간 내) | API 호출 없이 캐시 반환 |
+
+### OHLCV 수집 (⑥)
+
+**파일**: `data/fetcher.py`
+
+3개 타임프레임을 `asyncio.gather`로 동시 수집:
+
+| 항목 | 설명 |
+|---|---|
+| 거래소 | Gate.io (ccxt async, 싱글턴 인스턴스) |
+| 마켓 타입 | swap (선물) |
+| rate limit | ccxt 내장 rate limiter 사용 |
+
+| 상황 | 결과 |
+|---|---|
+| 특정 TF 수집 실패 | 해당 TF만 빈 DataFrame, 나머지 정상 |
+| 3개 TF 중 하나라도 비어있음 | 탑다운 분석 스킵 |
+| 거래소 연결 실패 | 에러 로그, 해당 심볼 스킵 |
+
+### 뉴스 수집 (⑥)
+
+**파일**: `data/news.py`
+
+```
+CoinDesk RSS + CoinTelegraph RSS (5분 캐시)
+  ↓
+심볼별 키워드 필터링 (예: BTC → "bitcoin", "btc", "crypto", "fed")
+  ↓
+최대 5건 반환
+```
+
+| 코인 | 매칭 키워드 |
+|---|---|
+| BTC | bitcoin, btc, crypto, market, fed, rate |
+| ETH | ethereum, eth, ether |
+| SOL | solana, sol |
+| DOGE | dogecoin, doge |
+| 기타 | 티커 소문자 (예: "xrp", "ada") |
+
+| 상황 | 결과 |
+|---|---|
+| RSS 수집 실패 | 피드별 독립 처리, 실패한 건 스킵 |
+| 해당 코인 뉴스 0건 | 전체 뉴스에서 상위 5건 반환 (폴백) |
+| 캐시 유효 (5분 내) | API 호출 없이 캐시 반환 |
+
+---
+
+## 스킵 조건
+
+**파일**: `state/loop_state.py`
+
+심볼별로 4가지 조건을 순서대로 체크. 하나라도 해당되면 해당 심볼 스킵.
+
+### 스킵 조건 4가지 (체크 순서)
+
+| 순서 | 조건 | 해제 조건 | 통계 카운터 |
+|---|---|---|---|
+| 1 | **LLM 실행 중** | LLM 응답 수신 시 해제 | `total_skipped_llm` |
+| 2 | **포지션 보유 중** | 포지션 종료(SL/TP) 시 해제 | `total_skipped_position` |
+| 3 | **쿨다운** (마지막 신호 후 1시간) | 1시간 경과 시 해제 | `total_skipped_cooldown` |
+| 4 | **WAIT 3회 연속** | PASS 또는 REJECT 시 리셋 | `total_skipped_wait` |
+
+### WAIT 카운트 동작
+
+| LLM 결과 | wait_count 변화 |
+|---|---|
+| PASS | 0으로 리셋 |
+| REJECT | 0으로 리셋 |
+| WAIT | +1 증가 |
+| WAIT 3회 도달 | 해당 심볼 스킵 (다음 PASS/REJECT까지) |
+
+### 루프 통계
+
+10루프(10분)마다 요약 로깅:
+
+```
+=== 루프 통계 (가동 2.5시간) ===
+루프 150회 | 스캔 4500회
+신호 12건 | LLM 8회
+PASS 3 | REJECT 4 | WAIT 1
+체결 2건
+스킵: 쿨다운=3800 포지션=120 LLM진행=5 WAIT초과=0
+```
+
+---
+
+## 실행 직렬화 (Race Condition 방지)
+
+**문제**: 같은 루프에서 여러 PASS 신호가 `asyncio.create_task`로 병렬 실행 → 서로의 포지션을 모른 채 각자 증거금 사용 → 담보 초과.
+
+**해결**: `asyncio.Lock`으로 `_execute_pass` 전체를 직렬화.
+
+```
+LLM 검토: 병렬 (3개 동시, 세마포어)
+         ↓
+주문 실행: 직렬 (Lock)
+  ├─ PASS 1: 잔고 확인 → 사이징 → 주문 → 포지션 등록
+  ├─ PASS 2: (Lock 대기) → 잔고 재확인 → 사이징 → 주문
+  └─ PASS 3: (Lock 대기) → 잔고 재확인 → 담보 부족이면 스킵
+```
+
+| 항목 | LLM 검토 | 주문 실행 |
+|---|---|---|
+| 동시성 | **병렬** (Semaphore 3) | **직렬** (Lock) |
+| 이유 | LLM 응답 시간 단축 | 증거금 정확한 계산 |
+
+---
+
+## 데이터 수집 및 영속화
+
+### 자동 생성되는 파일
+
+| 파일 | 내용 | 생성 시점 |
+|---|---|---|
+| `logs/ict_trader_YYYYMMDD.log` | 일별 로그 | 봇 시작 시 |
+| `trade_history.json` | 거래 승/패 이력 | 포지션 종료 시 |
+| `llm_decisions.json` | LLM 판단 이력 | LLM 호출마다 |
+
+### trade_history.json 용도
+
+- 봇 재시작 시 자동 로드 (이력 유지)
+- 현재는 통계 집계용 (`get_trade_stats()`)
+- 향후 Kelly/사이징 동적 조정의 기반 데이터
+
+### llm_decisions.json 용도
+
+- LLM이 왜 PASS/REJECT/WAIT 했는지 추적
+- 에러/타임아웃도 기록 (디버깅)
+- 전략 개선 시 분석 데이터
+
+### 확인 명령
+
+```bash
+# LLM 판단 통계
+python3 -c "
+import json
+from collections import Counter
+data = json.load(open('ict_trader/llm_decisions.json'))
+print(f'총 {len(data)}건')
+print(Counter(d['verdict'] for d in data))
+"
+
+# 거래 이력
+python3 -c "
+import json
+data = json.load(open('ict_trader/trade_history.json'))
+wins = sum(1 for d in data if d['win'])
+print(f'총 {len(data)}건, 승 {wins}, 패 {len(data)-wins}')
+if data: print(f'승률: {wins/len(data)*100:.1f}%')
+"
+```
