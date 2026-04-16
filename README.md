@@ -1,7 +1,7 @@
 # ICT 자동 트레이딩 시스템
 
 ICT(Inner Circle Trader) 전략 기반 암호화폐 선물 자동매매 봇.
-알고리즘이 ICT 트리거를 감지하고 신호를 생성하면 LLM(Claude)이 최종 PASS/REJECT를 결정한다.
+알고리즘이 ICT 트리거를 감지하고 신호를 생성하면 LLM(Claude)이 최종 PASS/WAIT를 결정한다.
 
 ## 기술 스택
 
@@ -87,8 +87,7 @@ ict_trader/
 | `LLM_TIMEOUT_SECONDS` | 120 | Claude CLI 응답 대기 (초) |
 | `LLM_MAX_CONCURRENT` | 3 | 동시 LLM 호출 최대 수 |
 | `ECON_LOCK_MINUTES` | 30 | 경제지표 전후 잠금 (분) |
-| `SIGNAL_COOLDOWN_SECONDS` | 3600 | 심볼당 신호 후 대기 (초) |
-| `LLM_WAIT_MAX_CONSECUTIVE` | 3 | WAIT 연속 최대 횟수 |
+| WAIT 대기 시간 | 5~120분 | LLM이 동적으로 결정 |
 | `TOP_SIGNALS_FOR_LLM` | 3 | R:R 상위 N개만 LLM 검토 |
 
 ### 타임프레임
@@ -409,7 +408,7 @@ ICT가 감지하는 모든 컨플루언스. 점수 시스템 없이 이름만 �
 
 ### 역할
 
-LLM은 **방향/진입가/SL/TP를 결정하지 않는다**. 알고리즘이 모두 결정한 후, LLM은 PASS/REJECT/WAIT만 판단한다.
+LLM은 **방향/진입가/SL/TP를 결정하지 않는다**. 알고리즘이 모두 결정한 후, LLM은 **PASS 또는 WAIT만** 판단한다.
 
 ### 프롬프트 구성 (`prompt_builder.py`)
 
@@ -438,11 +437,11 @@ LLM에 전달되는 데이터:
 
 ```json
 {
-  "verdict": "PASS | REJECT | WAIT",
+  "verdict": "PASS | WAIT",
   "reasoning": "3줄 이내 한국어 설명",
   "news_impact": "POSITIVE | NEGATIVE | NEUTRAL",
   "econ_risk": "HIGH | LOW",
-  "wait_reason": "WAIT일 때만 사유, 아니면 null"
+  "wait_minutes": "WAIT일 때 재검토 대기 시간 (5~120분 정수), PASS면 null"
 }
 ```
 
@@ -458,36 +457,28 @@ echo "{시스템프롬프트}\n---\n{신호+뉴스+경제}" | claude -p --model 
 
 ### LLM 에러 처리
 
-| 상황 | verdict | 주문 실행? |
-|---|---|---|
-| LLM 정상 → PASS | PASS | **실행** |
-| LLM 정상 → REJECT | REJECT | 스킵 |
-| LLM 정상 → WAIT | WAIT | 스킵 |
-| 타임아웃 (`LLM_TIMEOUT_SECONDS`=120초) | WAIT | 스킵 |
-| Claude CLI 에러 (code≠0) | REJECT | 스킵 |
-| JSON 파싱 실패 (응답이 JSON이 아님) | REJECT | 스킵 |
-| 알 수 없는 verdict 문자열 | REJECT | 스킵 |
-| 그 외 예외 | REJECT | 스킵 |
-
-**LLM 실패 시 절대 자동 PASS 없음.** 모든 에러는 안전하게 REJECT 또는 WAIT.
-
-### PASS / REJECT / WAIT 후속 처리 차이
-
-| | PASS | REJECT | WAIT |
+| 상황 | verdict | 대기 시간 | 주문 실행? |
 |---|---|---|---|
-| **주문 실행** | 실행 | 스킵 | 스킵 |
-| **wait_count** | 0으로 리셋 | 0으로 리셋 | **+1 증가** |
-| **3회 연속 시** | - | - | **해당 세션 내 심볼 스킵** |
-| **다음 신호** | 쿨다운 1시간 후 정상 | 쿨다운 1시간 후 정상 | 쿨다운 후 다시 시도 (3회 미만이면) |
+| LLM 정상 → PASS | PASS | - | **실행** |
+| LLM 정상 → WAIT | WAIT | LLM이 결정 (5~120분) | 스킵 |
+| LLM이 REJECT 반환 | → WAIT 변환 | 10분 | 스킵 |
+| 타임아웃 (120초) | → WAIT | 10분 | 스킵 |
+| Claude CLI 에러 (code≠0) | → WAIT | 10분 | 스킵 |
+| JSON 파싱 실패 | → WAIT | 10분 | 스킵 |
+| 그 외 예외 | → WAIT | 10분 | 스킵 |
 
-**REJECT vs WAIT 핵심 차이**:
-- **REJECT** = "이 신호는 나쁘다" → wait_count 리셋, 다음 신호 때 깨끗한 상태
-- **WAIT** = "확신이 없다" → wait_count 누적, 3회 연속이면 해당 세션 내 차단
+**LLM 실패 시 절대 자동 PASS 없음.** 모든 에러는 WAIT(10분 대기)로 변환.
 
-**세션 전환 시 리셋**: 아시아→런던→뉴욕 세션이 바뀌면 모든 심볼의 wait_count가 자동 리셋됨.
-같은 세션 내에서만 WAIT 누적이 유효.
+### PASS / WAIT 후속 처리
 
-**무한 재시도 방지**: 같은 세션에서 WAIT 3회 연속 → 해당 심볼 스킵. 다음 세션에서 다시 시도 가능.
+| | PASS | WAIT |
+|---|---|---|
+| **주문 실행** | 즉시 실행 | 스킵 |
+| **대기 시간** | - | LLM이 반환한 5~120분 |
+| **재시도** | - | 대기 시간 경과 후 ICT가 다시 분석, 신호 있으면 다시 LLM 호출 |
+
+**WAIT 동작**: LLM이 "지금은 안 되지만 30분 후 다시 봐라"라고 판단하면 해당 심볼은 30분간 LLM 호출 스킵.
+대기 시간 경과 후 ICT가 재분석하여 신호가 있으면 다시 LLM에 전달. 무한 재시도 아님 — 매번 새로운 시장 상황 기반.
 
 ### JSON 파싱 (`_parse_response`)
 
@@ -496,7 +487,7 @@ echo "{시스템프롬프트}\n---\n{신호+뉴스+경제}" | claude -p --model 
 | 순수 JSON `{"verdict": ...}` | 그대로 파싱 |
 | 코드 블록 ` ```json ... ``` ` | 블록 내용 추출 후 파싱 |
 | JSON 앞뒤에 텍스트 | `{` ~ `}` 사이만 추출 |
-| 파싱 불가 | REJECT 반환 |
+| 파싱 불가 | WAIT 반환 (10분 대기) |
 
 ### 판단 이력 저장
 
@@ -519,7 +510,7 @@ echo "{시스템프롬프트}\n---\n{신호+뉴스+경제}" | claude -p --model 
   "reasoning": "HTF bullish 추세와 OB 확인, 진입 적합",
   "news_impact": "POSITIVE",
   "econ_risk": "LOW",
-  "wait_reason": null,
+  "wait_minutes": null,
   "error": null
 }
 ```
@@ -852,17 +843,15 @@ CoinDesk RSS + CoinTelegraph RSS (5분 캐시)
 |---|---|---|---|
 | 1 | **LLM 실행 중** | LLM 응답 수신 시 해제 | `total_skipped_llm` |
 | 2 | **포지션 보유 중** | 포지션 종료(SL/TP) 시 해제 | `total_skipped_position` |
-| 3 | **쿨다운** (마지막 신호 후 1시간) | 1시간 경과 시 해제 | `total_skipped_cooldown` |
-| 4 | **WAIT 3회 연속** | PASS 또는 REJECT 시 리셋 | `total_skipped_wait` |
+| 3 | **WAIT 쿨다운** | LLM이 결정한 시간(5~120분) 경과 시 해제 | `total_skipped_wait` |
 
-### WAIT 카운트 동작
+### WAIT 동작
 
-| LLM 결과 | wait_count 변화 |
+| LLM 결과 | 동작 |
 |---|---|
-| PASS | 0으로 리셋 |
-| REJECT | 0으로 리셋 |
-| WAIT | +1 증가 |
-| WAIT 3회 도달 | 해당 심볼 스킵 (다음 PASS/REJECT까지) |
+| PASS | 즉시 주문 실행 |
+| WAIT (30분) | 해당 심볼 30분간 LLM 호출 스킵 → 30분 후 ICT 재분석 → 신호 있으면 다시 LLM |
+| 에러/타임아웃 | → WAIT 10분으로 변환 |
 
 ### 루프 통계
 
@@ -872,9 +861,9 @@ CoinDesk RSS + CoinTelegraph RSS (5분 캐시)
 === 루프 통계 (가동 2.5시간) ===
 루프 150회 | 스캔 4500회
 신호 12건 | LLM 8회
-PASS 3 | REJECT 4 | WAIT 1
-체결 2건
-스킵: 쿨다운=3800 포지션=120 LLM진행=5 WAIT초과=0
+PASS 3 | WAIT 5
+체결 3건
+스킵: WAIT=200 포지션=120 LLM진행=5
 ```
 
 ---
@@ -919,7 +908,7 @@ LLM 검토: 병렬 (3개 동시, 세마포어)
 
 ### llm_decisions.json 용도
 
-- LLM이 왜 PASS/REJECT/WAIT 했는지 추적
+- LLM이 왜 PASS/WAIT 했는지 추적
 - 에러/타임아웃도 기록 (디버깅)
 - 전략 개선 시 분석 데이터
 
@@ -1028,13 +1017,12 @@ if total_used + margin > balance:
 | 상황 | verdict | 주문 실행 | llm_decisions.json |
 |---|---|---|---|
 | LLM 정상 → PASS | PASS | **실행** | 기록 |
-| LLM 정상 → REJECT | REJECT | 스킵 | 기록 |
-| LLM 정상 → WAIT | WAIT | 스킵 | 기록 |
-| 타임아웃 (120초) | WAIT | 스킵 | 기록 (error="timeout") |
-| Claude CLI 에러 (code≠0) | REJECT | 스킵 | 기록 (error=메시지) |
-| JSON 파싱 실패 | REJECT | 스킵 | 기록 (error=파싱에러) |
-| 알 수 없는 verdict 문자열 | REJECT | 스킵 | 기록 |
-| 그 외 예외 | REJECT | 스킵 | 기록 |
+| LLM 정상 → WAIT | WAIT | 스킵 (LLM 결정 시간) | 기록 |
+| LLM이 REJECT 반환 | → WAIT | 스킵 (10분) | 기록 |
+| 타임아웃 (120초) | → WAIT | 스킵 (10분) | 기록 (error="timeout") |
+| Claude CLI 에러 (code≠0) | → WAIT | 스킵 (10분) | 기록 (error=메시지) |
+| JSON 파싱 실패 | → WAIT | 스킵 (10분) | 기록 (error=파싱에러) |
+| 그 외 예외 | → WAIT | 스킵 (10분) | 기록 |
 
 **LLM 실패 시 자동 PASS는 절대 없음.**
 
@@ -1074,7 +1062,7 @@ if total_used + margin > balance:
 | 유니버스 비어있음 | 경고 로그, return |
 | 심볼별 OHLCV 실패 | 해당 심볼 스킵, 나머지 계속 |
 | 탑다운 분석 중 예외 | 해당 심볼 스킵 |
-| `_process_trigger` 예외 | 에러 로그, REJECT 처리 |
+| `_process_trigger` 예외 | 에러 로그, WAIT 10분 처리 |
 | 루프 전체 예외 | 에러 로그 + 알림, 루프 계속 (봇 안 죽음) |
 | SIGINT/SIGTERM | `_shutdown=True`, 현재 주문 완료 후 종료 |
 
