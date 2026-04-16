@@ -12,10 +12,8 @@ import asyncio
 
 from ict_trader.config import (
     LEVERAGE_MIN, LEVERAGE_MAX, LIQUIDATION_SAFETY_BUFFER,
-    KELLY_FLOOR, PAPER_TRADING,
-    SIZING_MIN_SAMPLES, SIZING_BACKTEST_WIN_RATE,
-    SIZING_MAX_FRACTION, SIZING_MAX_TOTAL_EXPOSURE,
-    MAX_CONCURRENT_POSITIONS,
+    PAPER_TRADING,
+    RISK_PER_TRADE, MAX_CONCURRENT_POSITIONS,
 )
 from ict_trader.data.fetcher import get_exchange, get_tick_size
 from ict_trader.algorithm.trigger import TriggerEvent
@@ -235,82 +233,40 @@ def calculate_optimal_leverage(
 
 def calculate_bet_fraction(rr_ratio: float) -> float:
     """
-    1포지션당 Half-Kelly 베팅 비율을 결정한다.
-    포지션 개수와 무관하게 "1개만 있다면 최적"인 Kelly 사이즈 반환.
-    여러 포지션 동시 진입은 MAX_CONCURRENT_POSITIONS 제한으로 관리.
-
-    - 표본 < SIZING_MIN_SAMPLES: 백테스트 승률 기반
-    - 표본 >= SIZING_MIN_SAMPLES: 실측 승률 기반
+    ICT Fixed Fractional: 거래당 고정 리스크 비율 반환.
+    R:R이나 승률과 무관하게 RISK_PER_TRADE 반환.
 
     Returns:
-        잔고 대비 1포지션당 베팅 비율 (0.0이면 진입 안 함)
+        자산 대비 리스크 비율 (예: 0.02 = 2%)
     """
-    total, win_rate, _ = get_trade_stats()
-
-    if total < SIZING_MIN_SAMPLES:
-        p = SIZING_BACKTEST_WIN_RATE
-        mode = f"백테스트 기반 (표본 {total}/{SIZING_MIN_SAMPLES})"
-    else:
-        p = win_rate
-        mode = f"실측 기반 (승률 {p*100:.1f}%, 표본 {total}건)"
-
-    # Half-Kelly: f = (p*b - q) / b / 2
-    b = rr_ratio
-    q = 1.0 - p
-    f = (p * b - q) / b
-
-    if f <= 0:
-        logger.info("사이징: 켈리 음수 (p=%.2f, R:R=%.2f), 진입 안 함", p, b)
-        return 0.0
-
-    f *= 0.5  # Half-Kelly
-    f = max(KELLY_FLOOR, f)
-    f = min(f, SIZING_MAX_FRACTION)
-    logger.info("사이징: Half-Kelly %.1f%% — %s", f * 100, mode)
-    return f
+    logger.info("사이징: Fixed Fractional %.1f%% (R:R=%.2f)", RISK_PER_TRADE * 100, rr_ratio)
+    return RISK_PER_TRADE
 
 
 def calculate_position_size(
     balance: float,
-    kelly_fraction: float,
+    risk_fraction: float,
     entry_price: float,
     stop_loss: float,
     current_exposure: float,
     leverage: int,
 ) -> tuple[float, float]:
-    """리스크 기반 포지션 사이징 (동적 레버리지 적용)."""
+    """
+    ICT Fixed Fractional 포지션 사이징.
+    포지션 사이즈는 오직 risk%와 SL거리로 결정 (레버리지는 margin만 영향).
+    """
     sl_distance_pct = abs(entry_price - stop_loss) / entry_price
     if sl_distance_pct <= 0:
         return 0.0, 0.0
 
-    remaining = SIZING_MAX_TOTAL_EXPOSURE - current_exposure
-    if remaining < KELLY_FLOOR:
-        return 0.0, 0.0
-
-    risk_amount = balance * kelly_fraction
+    risk_amount = balance * risk_fraction
     notional = risk_amount / sl_distance_pct
     margin = notional / leverage
     amount = notional / entry_price
 
-    # 포지션당 margin 한도 (자산의 SIZING_MAX_FRACTION) + 전체 잔여 한도
-    per_pos_cap = balance * SIZING_MAX_FRACTION
-    remaining_cap = balance * remaining
-    max_margin = min(per_pos_cap, remaining_cap)
-
-    if margin > max_margin:
-        scale = max_margin / margin
-        margin = max_margin
-        notional *= scale
-        amount *= scale
-        logger.info(
-            "증거금 한도 축소 %.1f%% (kelly=%.1f%%, sl=%.2f%%, lev=%dx, 포지션당상한=%.0f%%)",
-            scale * 100, kelly_fraction * 100, sl_distance_pct * 100, leverage,
-            SIZING_MAX_FRACTION * 100,
-        )
-
     logger.info(
-        "사이징: risk=%.2f%%(= $%.2f), SL거리=%.2f%%, lev=%dx → margin=$%.2f, notional=$%.2f",
-        kelly_fraction * 100, risk_amount, sl_distance_pct * 100,
+        "사이징: risk=%.1f%%(=$%.2f), SL=%.2f%%, L=%dx → margin=$%.2f, notional=$%.2f",
+        risk_fraction * 100, risk_amount, sl_distance_pct * 100,
         leverage, margin, notional,
     )
     return margin, amount

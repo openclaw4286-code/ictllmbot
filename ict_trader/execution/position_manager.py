@@ -10,7 +10,7 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from ict_trader.config import PAPER_TRADING, SIZING_MAX_TOTAL_EXPOSURE
+from ict_trader.config import PAPER_TRADING
 from ict_trader.data.fetcher import get_exchange
 
 logger = logging.getLogger(__name__)
@@ -73,8 +73,8 @@ class PositionManager:
         return total_margin / self._total_balance
 
     def get_remaining_margin_ratio(self) -> float:
-        """잔여 사용 가능 증거금 비율."""
-        return max(0.0, SIZING_MAX_TOTAL_EXPOSURE - self.get_margin_usage())
+        """잔여 사용 가능 증거금 비율 (1.0 = 전체 사용 가능)."""
+        return max(0.0, 1.0 - self.get_margin_usage())
 
     def set_balance(self, balance: float) -> None:
         """총 잔액을 설정한다."""

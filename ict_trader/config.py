@@ -116,15 +116,9 @@ LEVERAGE_MAX = 25                    # 상한 (청산 절대 안전선)
 LEVERAGE_MIN = 3                     # 하한
 LIQUIDATION_SAFETY_BUFFER = 2.0      # SL이 청산가의 1/2 이내가 되도록 (2배 여유)
 
-# 사이징 모드: 표본 부족 시 백테스트 기반 Half-Kelly, 충분하면 실측 Half-Kelly
-SIZING_MIN_SAMPLES = 20              # 이 표본 수 이상이면 실측 승률로 전환
-SIZING_BACKTEST_WIN_RATE = 0.43      # 백테스트 기반 fallback 승률 (42.9%)
-
-# 포지션 분산
+# ICT 표준 리스크 관리: Fixed Fractional (2% 룰)
+RISK_PER_TRADE = 0.02                # 거래당 리스크 (자산의 2%, 공격적)
 MAX_CONCURRENT_POSITIONS = 10        # 동시 보유 최대 포지션 수
-SIZING_MAX_FRACTION = 0.10           # 1포지션당 증거금 최대 (자산의 10%)
-SIZING_MAX_TOTAL_EXPOSURE = 1.00     # 전체 증거금 합산 최대 (100% = 10포지션 × 10%)
-KELLY_FLOOR = 0.01                   # 켈리 하한 (1%)
 
 # ──────────────────────────────────────────────
 # 알고리즘 파라미터 세트
