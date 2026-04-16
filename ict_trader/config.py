@@ -112,9 +112,9 @@ LTF_CANDLE_LIMIT = 200
 # ──────────────────────────────────────────────
 # 동적 레버리지: SL 거리에 따라 최대 안전 레버리지 자동 계산
 # L = min(LEVERAGE_MAX, 1 / (SL거리 × LIQUIDATION_SAFETY_BUFFER))
-LEVERAGE_MAX = 25                    # 상한 (청산 절대 안전선)
+LEVERAGE_MAX = 50                    # 상한 (거래소 알트코인 한도 수준)
 LEVERAGE_MIN = 3                     # 하한
-LIQUIDATION_SAFETY_BUFFER = 2.0      # SL이 청산가의 1/2 이내가 되도록 (2배 여유)
+LIQUIDATION_SAFETY_BUFFER = 3.0      # 청산이 SL의 3배 이상 멀리 있도록 (플래시 크래시 대응)
 
 # ICT 표준 리스크 관리: Fixed Fractional (2% 룰)
 RISK_PER_TRADE = 0.02                # 거래당 리스크 (자산의 2%, 공격적)
