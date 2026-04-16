@@ -400,3 +400,273 @@ ICT가 감지하는 모든 컨플루언스. 점수 시스템 없이 이름만 �
 | | Session Range Sweep | 이전 세션 레인지 스윕 |
 | | LTF Liquidity Sweep | LTF BSL/SSL |
 | | LTF BOS/CHoCH | LTF 구조 브레이크 |
+
+---
+
+## LLM 판단
+
+**파일**: `llm/prompt_builder.py`, `llm/analyzer.py`
+
+### 역할
+
+LLM은 **방향/진입가/SL/TP를 결정하지 않는다**. 알고리즘이 모두 결정한 후, LLM은 PASS/REJECT/WAIT만 판단한다.
+
+### 프롬프트 구성 (`prompt_builder.py`)
+
+LLM에 전달되는 데이터:
+
+| 항목 | 내용 |
+|---|---|
+| 시스템 프롬프트 | ICT 분석가 역할 정의, JSON 응답 형식 지시 |
+| 신호 텍스트 | 심볼, 방향, 진입가/SL/TP, R:R, 세션, 컨플루언스 목록 |
+| 뉴스 | CoinDesk/CoinTelegraph RSS에서 해당 코인 최근 5건 |
+| 경제지표 | 향후 4시간 내 고영향 이벤트 |
+
+### LLM 판단 기준 (시스템 프롬프트에 명시)
+
+1. 차트 ICT 구조가 알고리즘 분석과 일치하는지
+2. 뉴스가 포지션 방향에 역행하지 않는지
+3. 고영향 경제지표가 임박해 변동성 리스크 있는지
+4. 전반적 시장 컨텍스트가 진입에 적합한지
+
+### LLM 응답 형식
+
+```json
+{
+  "verdict": "PASS | REJECT | WAIT",
+  "reasoning": "3줄 이내 한국어 설명",
+  "news_impact": "POSITIVE | NEGATIVE | NEUTRAL",
+  "econ_risk": "HIGH | LOW",
+  "wait_reason": "WAIT일 때만 사유, 아니면 null"
+}
+```
+
+### Claude CLI 호출 (`analyzer.py`)
+
+```
+echo "{시스템프롬프트}\n---\n{신호+뉴스+경제}" | claude -p --model opus
+```
+
+- `asyncio.create_subprocess_shell`로 실행 (PATH 환경 상속)
+- `ANTHROPIC_API_KEY` 환경변수 제거 (Max 로그인 인증 우선)
+- `asyncio.Semaphore`로 동시 호출 `LLM_MAX_CONCURRENT`(3)개 제한
+
+### LLM 에러 처리
+
+| 상황 | verdict | 주문 실행? |
+|---|---|---|
+| LLM 정상 → PASS | PASS | **실행** |
+| LLM 정상 → REJECT | REJECT | 스킵 |
+| LLM 정상 → WAIT | WAIT | 스킵 |
+| 타임아웃 (`LLM_TIMEOUT_SECONDS`=120초) | WAIT | 스킵 |
+| Claude CLI 에러 (code≠0) | REJECT | 스킵 |
+| JSON 파싱 실패 (응답이 JSON이 아님) | REJECT | 스킵 |
+| 알 수 없는 verdict 문자열 | REJECT | 스킵 |
+| 그 외 예외 | REJECT | 스킵 |
+
+**LLM 실패 시 절대 자동 PASS 없음.** 모든 에러는 안전하게 REJECT 또는 WAIT.
+
+### JSON 파싱 (`_parse_response`)
+
+| 입력 형태 | 처리 |
+|---|---|
+| 순수 JSON `{"verdict": ...}` | 그대로 파싱 |
+| 코드 블록 ` ```json ... ``` ` | 블록 내용 추출 후 파싱 |
+| JSON 앞뒤에 텍스트 | `{` ~ `}` 사이만 추출 |
+| 파싱 불가 | REJECT 반환 |
+
+### 판단 이력 저장
+
+모든 LLM 판단은 `ict_trader/llm_decisions.json`에 누적 저장:
+
+```json
+{
+  "timestamp": "2026-04-16T01:28:18+00:00",
+  "symbol": "BTC/USDT",
+  "direction": "bullish",
+  "entry_type": "fvg_ce",
+  "entry_price": 70000,
+  "stop_loss": 68600,
+  "take_profit": 73500,
+  "rr_ratio": 2.5,
+  "session": "뉴욕",
+  "confluences_count": 5,
+  "confluences": ["HTF 추세 일치", "HTF OB Active", ...],
+  "verdict": "PASS",
+  "reasoning": "HTF bullish 추세와 OB 확인, 진입 적합",
+  "news_impact": "POSITIVE",
+  "econ_risk": "LOW",
+  "wait_reason": null,
+  "error": null
+}
+```
+
+에러/타임아웃도 기록됨 (추적 가능).
+
+---
+
+## 주문 실행
+
+**파일**: `execution/gate_executor.py`
+
+### 포지션 사이징 (Fixed Fractional, ICT 2% 룰)
+
+```
+1. 리스크 금액 = 잔고 × RISK_PER_TRADE (2%)
+2. 노셔널(포지션 크기) = 리스크 금액 / SL 거리%
+3. 레버리지 = min(LEVERAGE_MAX, 1 / (SL × LIQUIDATION_SAFETY_BUFFER))
+4. 증거금(margin) = 노셔널 / 레버리지
+```
+
+**예시** (잔고 $100, SL 2%):
+```
+리스크 = $100 × 2% = $2
+노셔널 = $2 / 2% = $100
+레버리지 = min(50, 1/(0.02×3)) = 16x
+증거금 = $100 / 16 = $6.25
+```
+
+### 동적 레버리지 (`calculate_optimal_leverage`)
+
+**공식**: `L = min(LEVERAGE_MAX, 1 / (SL거리 × LIQUIDATION_SAFETY_BUFFER))`
+
+**의미**: 청산가가 SL보다 `LIQUIDATION_SAFETY_BUFFER`배(3배) 이상 멀도록 보장.
+
+| SL 거리 | 이상적 L | 실제 L (상한 50) | 청산 거리 |
+|---|---|---|---|
+| 0.5% | 66.7 | **50x** | 2.0% (SL의 4배) |
+| 1% | 33.3 | **33x** | 3.0% (3배) |
+| 2% | 16.7 | **16x** | 6.3% (3배) |
+| 3% | 11.1 | **11x** | 9.1% (3배) |
+| 5% | 6.7 | **6x** | 16.7% (3배) |
+
+### 동시 포지션
+
+- **개수 제한 없음** (담보 남으면 계속 진입)
+- 담보 부족 시 사전 체크: `기사용 margin + 이번 margin > 잔고`이면 스킵
+- 거래소도 담보 부족 시 주문 자동 거부
+
+### tick_size 정밀도 처리 (`adjust_order_precision`)
+
+모든 주문은 반드시 이 함수를 통과:
+
+| 방향 | SL | TP | amount |
+|---|---|---|---|
+| Long | **floor** (내림) | **ceil** (올림) | **floor** |
+| Short | **ceil** (올림) | **floor** (내림) | **floor** |
+
+- `tick_size`: Gate.io 마켓별 최소 가격 단위
+- `amount_precision`: 최소 수량 단위
+- `min_amount`: 최소 주문량 미만이면 주문 취소
+
+### Gate.io 선물 계약 변환
+
+Gate.io 선물은 코인 수량이 아닌 **계약(contract) 단위** 주문:
+
+```
+contract_size = 0.0001 BTC (Gate.io BTC 선물 기준)
+contracts = coin_amount / contract_size
+→ 최소 1계약 보장
+```
+
+### Gate.io 선물 심볼 변환
+
+모든 주문에서 `BTC/USDT` → `BTC/USDT:USDT` 자동 변환.
+현물이 아닌 선물 마켓으로 라우팅하기 위함.
+
+### 주문 실행 흐름 (`execute_order`)
+
+```
+1. 코인 수량 → 계약 수 변환 (contract_size 기준)
+2. 정밀도 조정 (adjust_order_precision)
+3. 수량 0이면 → None 반환
+4. PAPER_TRADING이면 → 로그만 기록, 가상 주문 ID 반환
+5. 레버리지 설정 (exchange.set_leverage)
+6. 시장가 주문 (market order + price 파라미터)
+7. SL 주문 (stop order, reduceOnly)
+8. TP 주문 (limit order, reduceOnly)
+9. 주문 결과 dict 반환
+```
+
+### 주문 실행 에러 처리
+
+| 상황 | 결과 |
+|---|---|
+| 정밀도 조정 후 수량 0 | 주문 취소, None 반환 |
+| 레버리지 설정 실패 | 경고 로그, 기존값으로 계속 진행 |
+| 시장가 체결 실패 | None 반환, 에러 로그 |
+| SL 주문 실패 | 에러 로그, **시장가는 이미 체결됨** (수동 SL 필요) |
+| TP 주문 실패 | 에러 로그, **시장가는 이미 체결됨** (수동 TP 필요) |
+| PAPER_TRADING | 실제 주문 없이 로그 기록, 가상 주문 ID |
+
+---
+
+## 포지션 관리
+
+**파일**: `execution/position_manager.py`
+
+### 포지션 추적
+
+`PositionManager`가 메모리에서 모든 활성 포지션을 관리:
+
+```python
+Position(
+    symbol, direction, entry_price, amount, margin,
+    stop_loss, take_profit, order_id,
+    sl_order_id, tp_order_id,
+    rr_ratio, entry_type, session, opened_at
+)
+```
+
+### 거래소 동기화 (`sync_from_exchange`)
+
+60초마다 메인 루프에서 호출:
+
+```
+1. 거래소에서 실제 포지션 목록 조회 (fetch_positions)
+2. 로컬에 있지만 거래소에 없는 포지션 = 청산됨 (SL/TP 체결)
+3. 청산된 포지션에 대해 승/패 판정
+4. trade_history.json에 기록
+5. 로컬에서 포지션 제거
+```
+
+### 승/패 판정 (`_determine_win_loss`)
+
+| 우선순위 | 방법 | 결과 |
+|---|---|---|
+| 1 | TP 주문 상태 조회 → "filled"/"closed" | **승 (True)** |
+| 2 | SL 주문 상태 조회 → "filled"/"closed" | **패 (False)** |
+| 3 | 폴백: 현재가 vs 진입가 방향 비교 | 방향 일치면 승 |
+| 4 | 모든 조회 실패 | **패로 처리 (보수적)** |
+
+### 거래 이력 영속화
+
+`trade_history.json`에 모든 결과 저장 (봇 재시작 시 로드):
+
+```json
+[
+  {"win": true,  "rr": 2.5, "symbol": "BTC/USDT",  "timestamp": "..."},
+  {"win": false, "rr": 1.8, "symbol": "ETH/USDT",  "timestamp": "..."}
+]
+```
+
+### 알림 (`execution/notifier.py`)
+
+모든 알림은 콘솔 + 로그 파일에 출력:
+
+```
+============================================================
+  LONG — BTC/USDT  |  R:R 1:2.5  |  3 confluences
+  진입 $70,000.00  SL $68,600.00  TP $73,500.00
+  켈리 베팅: 2.0%  |  포지션: 0.001 BTC
+  [LLM 검토] HTF bullish 추세 확인, 진입 적합
+  뉴스: 긍정적  |  경제지표 리스크: 낮음
+============================================================
+```
+
+| 알림 함수 | 용도 |
+|---|---|
+| `notify_signal` | 신호 + LLM 판단 + 사이징 정보 |
+| `notify_status` | 시스템 시작/종료 |
+| `notify_error` | 에러 발생 |
+| `notify_position_closed` | 포지션 종료 (사유 + PnL) |
