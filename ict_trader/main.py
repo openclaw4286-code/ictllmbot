@@ -133,6 +133,54 @@ async def _process_trigger(
         loop_state.mark_llm_done(symbol, "WAIT", 10)
 
 
+async def _emergency_close(trigger: TriggerEvent, order_result: dict) -> None:
+    """
+    SL/TP 설정 실패 시 즉시 시장가 청산.
+    체결됐지만 보호 주문이 안 걸린 포지션을 그대로 두면 위험.
+    """
+    from ict_trader.data.fetcher import get_exchange
+
+    futures_symbol = trigger.symbol
+    if ":USDT" not in futures_symbol:
+        futures_symbol = f"{futures_symbol}:USDT"
+
+    close_side = "sell" if trigger.direction == "bullish" else "buy"
+    amount = order_result.get("amount", 0)
+
+    try:
+        exchange = await get_exchange()
+        close_order = await exchange.create_order(
+            symbol=futures_symbol,
+            type="market",
+            side=close_side,
+            amount=amount,
+            price=trigger.entry_price,
+            params={"reduceOnly": True},
+        )
+        logger.info(
+            "긴급 청산 완료: %s %s %.6f (id=%s)",
+            trigger.symbol, close_side.upper(), amount, close_order.get("id"),
+        )
+    except Exception as e:
+        logger.critical(
+            "긴급 청산 실패!!! %s: %s — 수동 개입 필요",
+            trigger.symbol, e,
+        )
+
+    # 미체결 주문(한쪽만 걸렸을 경우) 취소
+    try:
+        exchange = await get_exchange()
+        open_orders = await exchange.fetch_open_orders(futures_symbol)
+        for o in open_orders:
+            try:
+                await exchange.cancel_order(o["id"], futures_symbol)
+                logger.info("미체결 주문 취소: %s", o["id"])
+            except Exception as e:
+                logger.warning("주문 취소 실패: %s — %s", o["id"], e)
+    except Exception as e:
+        logger.error("미체결 주문 조회 실패: %s", e)
+
+
 async def _execute_pass(
     trigger: TriggerEvent,
     verdict: LLMVerdict,
@@ -194,6 +242,17 @@ async def _execute_pass_locked(
     order_result = await execute_order(trigger, amount, market_info, leverage)
     if order_result is None:
         logger.error("%s: 주문 실행 실패", symbol)
+        return
+
+    # SL/TP 미설정 시 즉시 긴급 청산 (안전장치)
+    sl_ok = bool(order_result.get("sl_order_id")) and "sl_error" not in order_result
+    tp_ok = bool(order_result.get("tp_order_id")) and "tp_error" not in order_result
+    if not sl_ok or not tp_ok:
+        logger.error(
+            "%s: SL/TP 미설정 (sl=%s, tp=%s) → 긴급 청산",
+            symbol, sl_ok, tp_ok,
+        )
+        await _emergency_close(trigger, order_result)
         return
 
     # 포지션 등록
