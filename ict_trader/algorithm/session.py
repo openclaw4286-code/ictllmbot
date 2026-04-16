@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from ict_trader.config import SESSIONS
+from ict_trader.config import SESSIONS, LUNCH_BREAKS
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,10 @@ def get_current_session(now_utc: datetime | None = None) -> str | None:
 
     for session_name, times in SESSIONS.items():
         if times["start"] <= hour < times["end"]:
+            # 점심시간 체크
+            lunch = LUNCH_BREAKS.get(session_name)
+            if lunch and lunch["start"] <= hour < lunch["end"]:
+                return None  # 점심시간 = 비활성
             return session_name
 
     return None
