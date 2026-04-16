@@ -11,7 +11,7 @@ import logging
 import asyncio
 
 from ict_trader.config import (
-    LEVERAGE_MIN, LEVERAGE_MAX, LEVERAGE_FALLBACK, KELLY_FLOOR, PAPER_TRADING,
+    LEVERAGE, KELLY_FLOOR, PAPER_TRADING,
     SIZING_MIN_SAMPLES, SIZING_BACKTEST_WIN_RATE,
     SIZING_MAX_FRACTION, SIZING_MAX_TOTAL_EXPOSURE,
     MAX_CONCURRENT_POSITIONS,
@@ -210,23 +210,8 @@ def calculate_optimal_leverage(
     Returns:
         최적 레버리지 (정수)
     """
-    sl_distance = abs(entry_price - stop_loss) / entry_price
-    if sl_distance <= 0 or kelly_fraction <= 0:
-        return LEVERAGE_FALLBACK
-
-    # 포지션당 증거금 한도 = 전체 한도 / N
-    per_pos_exposure = SIZING_MAX_TOTAL_EXPOSURE / MAX_CONCURRENT_POSITIONS
-
-    # Kelly 달성 최소 레버리지 (포지션당 한도 기준)
-    l_min = kelly_fraction / (per_pos_exposure * sl_distance)
-    l_optimal = l_min * 1.2  # 안전 버퍼
-
-    l_final = int(max(LEVERAGE_MIN, min(LEVERAGE_MAX, l_optimal)))
-    logger.info(
-        "동적 레버리지: kelly=%.1f%%, SL=%.2f%%, 포지션당한도=%.1f%% → L=%dx",
-        kelly_fraction * 100, sl_distance * 100, per_pos_exposure * 100, l_final,
-    )
-    return l_final
+    # 레버리지는 config의 LEVERAGE로 고정
+    return LEVERAGE
 
 
 # ──────────────────────────────────────────────
@@ -235,8 +220,10 @@ def calculate_optimal_leverage(
 
 def calculate_bet_fraction(rr_ratio: float) -> float:
     """
-    베팅 비율을 Half-Kelly로 결정한다.
-    옵션 A 정적 분할: 1포지션당 Kelly / MAX_CONCURRENT_POSITIONS 할당.
+    1포지션당 Half-Kelly 베팅 비율을 결정한다.
+    포지션 개수와 무관하게 "1개만 있다면 최적"인 Kelly 사이즈 반환.
+    여러 포지션 동시 진입은 MAX_CONCURRENT_POSITIONS 제한으로 관리.
+
     - 표본 < SIZING_MIN_SAMPLES: 백테스트 승률 기반
     - 표본 >= SIZING_MIN_SAMPLES: 실측 승률 기반
 
@@ -255,23 +242,16 @@ def calculate_bet_fraction(rr_ratio: float) -> float:
     # Half-Kelly: f = (p*b - q) / b / 2
     b = rr_ratio
     q = 1.0 - p
-    f_full = (p * b - q) / b
+    f = (p * b - q) / b
 
-    if f_full <= 0:
+    if f <= 0:
         logger.info("사이징: 켈리 음수 (p=%.2f, R:R=%.2f), 진입 안 함", p, b)
         return 0.0
 
-    f_full *= 0.5  # Half-Kelly
-
-    # 옵션 A: 동시 포지션 수로 분할
-    f = f_full / MAX_CONCURRENT_POSITIONS
-
+    f *= 0.5  # Half-Kelly
     f = max(KELLY_FLOOR, f)
     f = min(f, SIZING_MAX_FRACTION)
-    logger.info(
-        "사이징: Half-Kelly %.1f%% ÷ %d포지션 = %.1f%% — %s",
-        f_full * 100, MAX_CONCURRENT_POSITIONS, f * 100, mode,
-    )
+    logger.info("사이징: Half-Kelly %.1f%% — %s", f * 100, mode)
     return f
 
 
@@ -297,10 +277,8 @@ def calculate_position_size(
     margin = notional / leverage
     amount = notional / entry_price
 
-    # 포지션당 증거금 한도 (전체/N) vs 전체 잔여 한도 중 작은 값
-    per_pos_max = balance * (SIZING_MAX_TOTAL_EXPOSURE / MAX_CONCURRENT_POSITIONS)
-    remaining_max = balance * remaining
-    max_margin = min(per_pos_max, remaining_max)
+    # 전체 증거금 한도만 체크 (포지션당 한도 없음 — 각 포지션 Full Kelly 보장)
+    max_margin = balance * remaining
 
     if margin > max_margin:
         scale = max_margin / margin
@@ -308,7 +286,7 @@ def calculate_position_size(
         notional *= scale
         amount *= scale
         logger.info(
-            "증거금 한도 초과, %.1f%%로 축소 (kelly=%.1f%%, sl=%.2f%%, lev=%dx)",
+            "전체 증거금 한도 근접, %.1f%%로 축소 (kelly=%.1f%%, sl=%.2f%%, lev=%dx)",
             scale * 100, kelly_fraction * 100, sl_distance_pct * 100, leverage,
         )
 
@@ -328,7 +306,7 @@ async def execute_order(
     trigger: TriggerEvent,
     amount: float,
     market_info: dict,
-    leverage: int = LEVERAGE_FALLBACK,
+    leverage: int = LEVERAGE,
 ) -> dict | None:
     """
     Gate.io에 주문을 실행한다.
