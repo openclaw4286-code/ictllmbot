@@ -79,9 +79,9 @@ UNIVERSE_EXCLUDE_STABLECOINS = True  # 스테이블코인 제외
 # 세션 (UTC 시간)
 # ──────────────────────────────────────────────
 SESSIONS = {
-    "asia":     {"start": 0,  "end": 2},   # 00:00 ~ 02:00 UTC
-    "london":   {"start": 7,  "end": 9},   # 07:00 ~ 09:00 UTC
-    "new_york": {"start": 13, "end": 15},   # 13:00 ~ 15:00 UTC
+    "asia":     {"start": 0,  "end": 6},    # 00:00 ~ 06:00 UTC (KST 09:00~15:00)
+    "london":   {"start": 7,  "end": 12},   # 07:00 ~ 12:00 UTC (KST 16:00~21:00)
+    "new_york": {"start": 12, "end": 17},   # 12:00 ~ 17:00 UTC (KST 21:00~02:00)
 }
 
 # ──────────────────────────────────────────────
